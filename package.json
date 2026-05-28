@@ -1,0 +1,15 @@
+{
+  "name": "qivance-music",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node --experimental-strip-types --test tests/*.test.ts",
+    "dev": "node --experimental-strip-types src/server.ts",
+    "workflow": "node --experimental-strip-types src/cli/run-workflow.ts"
+  },
+  "engines": {
+    "node": ">=24"
+  }
+}
+
