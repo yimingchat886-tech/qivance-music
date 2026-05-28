@@ -1,5 +1,7 @@
 import path from "node:path";
 import {
+  approvePreview,
+  approveScenePlan,
   generateBeatLock,
   generateHypeframesProject,
   generateScenePlans,
@@ -18,7 +20,8 @@ await lockAcceptedMusic(projectPath);
 await generateBeatLock(projectPath);
 await generateSectionMap(projectPath);
 await generateScenePlans(projectPath);
+await approveScenePlan(projectPath, "cli");
 await generateHypeframesProject(projectPath);
 await renderPreview(projectPath);
-console.log(`Preview workflow complete: ${projectPath}`);
-
+await approvePreview(projectPath, "cli");
+console.log(`Post-MiniMax workflow complete: ${projectPath}`);

@@ -29,15 +29,16 @@ test("imports a minimal accepted MiniMax project into the standard asset directo
     rawAudioPath: sourceAudio,
   });
 
-  assert.equal(project.workflowState, "music_accepted");
+  assert.equal(project.workflowState, "music_locking");
   assert.match(project.projectId, /^project_/);
 
   await stat(path.join(project.projectPath, "input", "input_config.json"));
   await stat(path.join(project.projectPath, "input", "project_brief.md"));
-  await stat(path.join(project.projectPath, "data", "lyrics.md"));
-  await stat(path.join(project.projectPath, "data", "lyrics_structured.json"));
-  await stat(path.join(project.projectPath, "data", "selected_music_prompt.json"));
-  await stat(path.join(project.projectPath, "audio", "minimax_rap_raw.mp3"));
+  await stat(path.join(project.projectPath, "data", "lyrics", "lyrics.md"));
+  await stat(path.join(project.projectPath, "data", "lyrics", "lyrics_structured.json"));
+  await stat(path.join(project.projectPath, "audio", "raw", "minimax_rap_raw.mp3"));
+  await stat(path.join(project.projectPath, "audio", "minimax_request_manifest.json"));
+  await stat(path.join(project.projectPath, "versions", "v003_music_generated_manifest.json"));
   await stat(path.join(project.projectPath, "project_manifest.json"));
   await stat(path.join(project.projectPath, "asset_manifest.json"));
   await stat(path.join(project.projectPath, "workflow_snapshot.json"));
@@ -45,6 +46,6 @@ test("imports a minimal accepted MiniMax project into the standard asset directo
   const workflowSnapshot = JSON.parse(
     await readFile(path.join(project.projectPath, "workflow_snapshot.json"), "utf8"),
   );
-  assert.equal(workflowSnapshot.workflow_state, "music_accepted");
+  assert.equal(workflowSnapshot.workflow_state, "music_locking");
+  assert.deepEqual(workflowSnapshot.next_allowed_actions, ["run_post_music_workflow"]);
 });
-

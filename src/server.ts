@@ -5,6 +5,8 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { importAcceptedMusicProject, type InputConfig } from "./lib/import-project.ts";
 import {
+  approvePreview,
+  approveScenePlan,
   generateBeatLock,
   generateHypeframesProject,
   generateScenePlans,
@@ -70,7 +72,26 @@ async function route(request: IncomingMessage, response: ServerResponse): Promis
   const runMatch = url.pathname.match(/^\/projects\/([^/]+)\/run-preview$/);
   if (request.method === "POST" && runMatch) {
     const projectId = decodeURIComponent(runMatch[1]);
-    await runPostMinimaxPreviewWorkflow(path.join(storageRoot, projectId));
+    await runPostMinimaxToSceneApproval(path.join(storageRoot, projectId));
+    redirect(response, `/projects/${encodeURIComponent(projectId)}`);
+    return;
+  }
+
+  const approveSceneMatch = url.pathname.match(/^\/projects\/([^/]+)\/approve-scene$/);
+  if (request.method === "POST" && approveSceneMatch) {
+    const projectId = decodeURIComponent(approveSceneMatch[1]);
+    const projectPath = path.join(storageRoot, projectId);
+    await approveScenePlan(projectPath);
+    await generateHypeframesProject(projectPath);
+    await renderPreview(projectPath);
+    redirect(response, `/projects/${encodeURIComponent(projectId)}`);
+    return;
+  }
+
+  const approvePreviewMatch = url.pathname.match(/^\/projects\/([^/]+)\/approve-preview$/);
+  if (request.method === "POST" && approvePreviewMatch) {
+    const projectId = decodeURIComponent(approvePreviewMatch[1]);
+    await approvePreview(path.join(storageRoot, projectId));
     redirect(response, `/projects/${encodeURIComponent(projectId)}`);
     return;
   }
@@ -94,13 +115,11 @@ async function route(request: IncomingMessage, response: ServerResponse): Promis
   response.end(renderNotFound());
 }
 
-async function runPostMinimaxPreviewWorkflow(projectPath: string): Promise<void> {
+async function runPostMinimaxToSceneApproval(projectPath: string): Promise<void> {
   await lockAcceptedMusic(projectPath);
   await generateBeatLock(projectPath);
   await generateSectionMap(projectPath);
   await generateScenePlans(projectPath);
-  await generateHypeframesProject(projectPath);
-  await renderPreview(projectPath);
 }
 
 async function sendDownload(response: ServerResponse, projectPath: string, relativePath: string): Promise<void> {
@@ -151,4 +170,3 @@ function contentType(relativePath: string): string {
   if (relativePath.endsWith(".jpg") || relativePath.endsWith(".jpeg")) return "image/jpeg";
   return "application/octet-stream";
 }
-

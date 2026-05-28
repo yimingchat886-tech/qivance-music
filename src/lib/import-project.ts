@@ -37,12 +37,26 @@ export type ImportedProject = {
 
 const projectDirs = [
   "input/source_materials",
-  "data",
-  "audio/versions",
+  "data/facts",
+  "data/lyrics",
+  "data/timing",
+  "data/storyboard",
+  "audio/raw",
+  "audio/master",
+  "audio/analysis",
   "hypeframes/compositions",
+  "hypeframes/public_assets/audio",
+  "hypeframes/render_targets",
+  "hypeframes/src",
   "hypeframes/generated",
-  "qa",
-  "dist/keyframes",
+  "qa/music",
+  "qa/timing",
+  "qa/storyboard",
+  "qa/hypeframes",
+  "qa/render/keyframes",
+  "dist/preview",
+  "dist/review",
+  "dist/final",
   "logs",
   "versions",
   "archive",
@@ -53,14 +67,14 @@ export async function importAcceptedMusicProject(
 ): Promise<ImportedProject> {
   const projectId = `project_${randomUUID().replaceAll("-", "").slice(0, 12)}`;
   const projectPath = path.join(input.storageRoot, projectId);
-  const workflowState: WorkflowState = "music_accepted";
+  const workflowState: WorkflowState = "music_locking";
 
   await ensureDir(projectPath);
   await Promise.all(projectDirs.map((dir) => ensureDir(path.join(projectPath, dir))));
 
   const rawExtension = path.extname(input.rawAudioPath).toLowerCase() || ".mp3";
   const rawAudioFile = `minimax_rap_raw${rawExtension}`;
-  const rawAudioDestination = path.join(projectPath, "audio", rawAudioFile);
+  const rawAudioDestination = path.join(projectPath, "audio", "raw", rawAudioFile);
   await copyFile(input.rawAudioPath, rawAudioDestination);
 
   const lyricsStructured = input.lyricsStructured ?? parseLyrics(input.lyricsMarkdown);
@@ -77,9 +91,15 @@ export async function importAcceptedMusicProject(
     input.projectBriefMarkdown ?? renderProjectBrief(input.inputConfig),
     "utf8",
   );
-  await writeFile(path.join(projectPath, "data", "lyrics.md"), input.lyricsMarkdown, "utf8");
-  await writeJson(path.join(projectPath, "data", "lyrics_structured.json"), lyricsStructured);
-  await writeJson(path.join(projectPath, "data", "selected_music_prompt.json"), selectedMusicPrompt);
+  await writeFile(path.join(projectPath, "data", "lyrics", "lyrics.md"), input.lyricsMarkdown, "utf8");
+  await writeJson(path.join(projectPath, "data", "lyrics", "lyrics_structured.json"), lyricsStructured);
+  await writeJson(path.join(projectPath, "audio", "minimax_request_manifest.json"), {
+    provider: "external_minimax",
+    prompt: selectedMusicPrompt,
+    lyrics_path: "data/lyrics/lyrics.md",
+    raw_audio_path: `audio/raw/${rawAudioFile}`,
+    created_at: new Date().toISOString(),
+  });
 
   const rawAudioHash = await sha256File(rawAudioDestination);
   const now = new Date().toISOString();
@@ -108,19 +128,15 @@ export async function importAcceptedMusicProject(
       },
       {
         type: "lyrics",
-        path: "data/lyrics.md",
+        path: "data/lyrics/lyrics.md",
       },
       {
         type: "lyrics_structured",
-        path: "data/lyrics_structured.json",
-      },
-      {
-        type: "selected_music_prompt",
-        path: "data/selected_music_prompt.json",
+        path: "data/lyrics/lyrics_structured.json",
       },
       {
         type: "raw_audio",
-        path: `audio/${rawAudioFile}`,
+        path: `audio/raw/${rawAudioFile}`,
         hash: rawAudioHash,
       },
     ],
@@ -130,8 +146,23 @@ export async function importAcceptedMusicProject(
   await writeJson(path.join(projectPath, "workflow_snapshot.json"), {
     project_id: projectId,
     workflow_state: workflowState,
-    next_allowed_actions: ["run_preview_workflow"],
+    next_allowed_actions: ["run_post_music_workflow"],
     updated_at: now,
+  });
+
+  await writeJson(path.join(projectPath, "versions", "v003_music_generated_manifest.json"), {
+    project_id: projectId,
+    workflow_state: workflowState,
+    input_artifacts: [
+      "input/input_config.json",
+      "input/project_brief.md",
+      "data/lyrics/lyrics.md",
+      "data/lyrics/lyrics_structured.json",
+      "audio/minimax_request_manifest.json",
+      `audio/raw/${rawAudioFile}`,
+    ],
+    raw_audio_hash: rawAudioHash,
+    created_at: now,
   });
 
   await writeFile(
@@ -161,4 +192,3 @@ function renderProjectBrief(inputConfig: InputConfig): string {
     "",
   ].join("\n");
 }
-

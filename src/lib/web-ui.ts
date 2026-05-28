@@ -33,10 +33,11 @@ export async function loadProjectSummary(projectPath: string): Promise<ProjectSu
   const manifest = await readJson<Record<string, unknown>>(path.join(projectPath, "project_manifest.json"));
   const projectId = String(manifest.project_id);
   const downloads = [
-    ["Preview", "dist/preview_composite.mp4"],
-    ["Review", "dist/preview_composite_review.mp4"],
-    ["Master audio", "audio/minimax_rap_master.wav"],
-    ["Lyrics", "data/lyrics.md"],
+    ["Final", "dist/final/hypeframes_final.mp4"],
+    ["Preview", "dist/preview/preview_composite.mp4"],
+    ["Review", "dist/review/preview_composite_review.mp4"],
+    ["Master audio", "audio/master/minimax_rap_master.wav"],
+    ["Lyrics", "data/lyrics/lyrics.md"],
     ["Render manifest", "dist/render_manifest.json"],
     ["Master QA", "qa/master_qa_report.json"],
   ] as const;
@@ -57,7 +58,7 @@ export async function loadProjectSummary(projectPath: string): Promise<ProjectSu
     aspectRatio: String(manifest.aspect_ratio ?? "9:16"),
     lockedAudioHash: nullableString(manifest.locked_audio_hash),
     previewVideoHash: nullableString(manifest.preview_video_hash),
-    hasPreview: await exists(path.join(projectPath, "dist", "preview_composite.mp4")),
+    hasPreview: await exists(path.join(projectPath, "dist", "preview", "preview_composite.mp4")),
     availableDownloads,
   };
 }
@@ -116,8 +117,14 @@ export function renderProjectWorkspace(project: ProjectSummary): string {
         )
         .join("\n");
   const action = project.workflowState === "music_accepted"
-    ? `<form method="post" action="/projects/${encodeURIComponent(project.projectId)}/run-preview"><button type="submit">生成 Preview 工作流</button></form>`
-    : project.workflowState === "export_ready"
+    ? `<form method="post" action="/projects/${encodeURIComponent(project.projectId)}/run-preview"><button type="submit">运行到分镜审批</button></form>`
+    : project.workflowState === "music_locking" || project.workflowState === "music_locked"
+      ? `<form method="post" action="/projects/${encodeURIComponent(project.projectId)}/run-preview"><button type="submit">运行到分镜审批</button></form>`
+    : project.workflowState === "scene_waiting_human"
+      ? `<form method="post" action="/projects/${encodeURIComponent(project.projectId)}/approve-scene"><button type="submit">OK，分镜通过并渲染 Preview</button></form>`
+    : project.workflowState === "preview_waiting_human"
+      ? `<form method="post" action="/projects/${encodeURIComponent(project.projectId)}/approve-preview"><button type="submit">OK，Preview 通过并登记成品</button></form>`
+    : project.workflowState === "hypeframes_video_ready"
       ? `<p class="success">Preview workflow complete. Assets are ready to download.</p>`
       : `<p>Current status does not expose a manual action in this first MVP.</p>`;
 
@@ -140,7 +147,7 @@ export function renderProjectWorkspace(project: ProjectSummary): string {
   </article>
   <article>
     <h2>Video</h2>
-    ${project.hasPreview ? `<video controls src="/projects/${encodeURIComponent(project.projectId)}/download?path=dist%2Fpreview_composite.mp4"></video>` : "<p>Preview not rendered yet.</p>"}
+    ${project.hasPreview ? `<video controls src="/projects/${encodeURIComponent(project.projectId)}/download?path=dist%2Fpreview%2Fpreview_composite.mp4"></video>` : "<p>Preview not rendered yet.</p>"}
   </article>
   <article>
     <h2>QA / Export</h2>
@@ -207,4 +214,3 @@ function escapeHtml(value: string): string {
     .replaceAll(">", "&gt;")
     .replaceAll('"', "&quot;");
 }
-
