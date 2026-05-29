@@ -5,6 +5,7 @@ import path from "node:path";
 import { promisify } from "node:util";
 import { ensureDir, sha256File, writeJson } from "./fs-utils.ts";
 import { parseLyrics, type StructuredLyrics } from "./lyrics.ts";
+import { resolveMainComposition, resolveVideoSize, type VideoSize } from "./render-settings.ts";
 import type { WorkflowState } from "./workflow.ts";
 
 const execFileAsync = promisify(execFile);
@@ -59,6 +60,11 @@ type SectionMap = {
 const previewWidth = 1080;
 const previewHeight = 1920;
 const previewFps = 30;
+
+type RenderSettings = VideoSize & {
+  mainComposition: string;
+  fps: number;
+};
 
 export async function lockAcceptedMusic(projectPath: string): Promise<MusicManifest> {
   await setWorkflowState(projectPath, "music_locking", []);
@@ -142,9 +148,7 @@ export async function lockAcceptedMusic(projectPath: string): Promise<MusicManif
 export async function generateBeatLock(projectPath: string): Promise<BeatLock> {
   await setWorkflowState(projectPath, "beat_locking", []);
   const manifest = await readJson<MusicManifest>(path.join(projectPath, "audio", "music_manifest.json"));
-  const inputConfig = await readJson<Record<string, unknown>>(path.join(projectPath, "input", "input_config.json"));
-  const bpmHint = typeof inputConfig.bpm_hint === "number" ? inputConfig.bpm_hint : null;
-  const analysis = await analyzeBeatGrid(path.join(projectPath, manifest.analysis_path), manifest.duration_sec, bpmHint);
+  const analysis = await analyzeBeatGrid(path.join(projectPath, manifest.analysis_path), manifest.duration_sec, null);
   const lock: BeatLock = {
     audio_hash: manifest.sha256,
     bpm: analysis.bpm,
@@ -347,6 +351,7 @@ export async function generateHypeframesProject(projectPath: string): Promise<vo
   const sectionMap = await readJson<SectionMap>(path.join(projectPath, "data", "timing", "section_map.json"));
   const scenePlan = await readJson<Record<string, unknown>>(path.join(projectPath, "data", "storyboard", "scene_plan.json"));
   const captionPlan = await readJson<Record<string, unknown>>(path.join(projectPath, "data", "storyboard", "caption_plan.json"));
+  const renderSettings = await readRenderSettings(projectPath);
   const audioOutput = path.join(projectPath, "hypeframes", "public_assets", "audio", "minimax_rap_master.wav");
   await ensureDir(path.dirname(audioOutput));
   await copyFile(path.join(projectPath, manifest.master_path), audioOutput);
@@ -365,26 +370,41 @@ export async function generateHypeframesProject(projectPath: string): Promise<vo
   };
 
   await writeFile(path.join(projectPath, "hypeframes", "DESIGN.md"), renderDesignDoc(), "utf8");
-  await writeFile(path.join(projectPath, "hypeframes", "src", "styles.css"), renderStyles(), "utf8");
-  await writeFile(path.join(projectPath, "hypeframes", "src", "main.js"), renderMainJs(sectionMap.duration_sec), "utf8");
+  await writeFile(path.join(projectPath, "hypeframes", "src", "styles.css"), renderStyles(renderSettings), "utf8");
+  await writeFile(
+    path.join(projectPath, "hypeframes", "src", "main.js"),
+    renderMainJs(sectionMap.duration_sec, renderSettings.mainComposition),
+    "utf8",
+  );
   await writeJson(path.join(projectPath, "hypeframes", "src", "config.json"), {
-    width: previewWidth,
-    height: previewHeight,
-    fps: previewFps,
+    width: renderSettings.width,
+    height: renderSettings.height,
+    fps: renderSettings.fps,
     duration_sec: sectionMap.duration_sec,
     audio_path: "public_assets/audio/minimax_rap_master.wav",
+    main_composition: renderSettings.mainComposition,
+    video_size: renderSettings.id,
   });
-  const html = renderHypeframesHtml(sectionMap);
+  const html = renderHypeframesHtml(sectionMap, renderSettings);
   await writeFile(path.join(projectPath, "hypeframes", "src", "index.html"), html, "utf8");
   await writeFile(path.join(projectPath, "hypeframes", "index.html"), html, "utf8");
   await writeJson(path.join(projectPath, "hypeframes", "generated", "timeline.json"), sectionMap);
   await writeJson(path.join(projectPath, "hypeframes", "generated", "scene_plan.json"), scenePlan);
   await writeJson(path.join(projectPath, "hypeframes", "generated", "caption_plan.json"), captionPlan);
   await writeJson(path.join(projectPath, "hypeframes", "render_targets", "render_targets.json"), targets);
+  await writeJson(path.join(projectPath, "data", "storyboard", "render_plan.json"), {
+    fps: renderSettings.fps,
+    resolution: [renderSettings.width, renderSettings.height],
+    main_composition: renderSettings.mainComposition,
+    targets: Object.keys(targets),
+  });
   await writeJson(path.join(projectPath, "hypeframes", "hypeframes_project_manifest.json"), {
     renderer: "hyperframes_cli_with_ffmpeg_fallback",
     version: "0.1.0",
     source: "generated_from_post_minimax_workflow",
+    main_composition: renderSettings.mainComposition,
+    video_size: renderSettings.id,
+    resolution: [renderSettings.width, renderSettings.height],
     render_targets: Object.keys(targets),
   });
   await writeQaReport(projectPath, "qa/hypeframes/hypeframes_file_qa_report.json", {
@@ -415,6 +435,7 @@ export async function renderPreview(projectPath: string): Promise<void> {
   const reviewPath = path.join(projectPath, "dist", "review", "preview_composite_review.mp4");
   const audioPath = path.join(projectPath, manifest.master_path);
   const renderLogPath = path.join(projectPath, "logs", "render_worker.log");
+  const renderSettings = await readRenderSettings(projectPath);
 
   await ensureDir(path.dirname(previewPath));
   await ensureDir(path.dirname(reviewPath));
@@ -422,11 +443,11 @@ export async function renderPreview(projectPath: string): Promise<void> {
   const hyperframesResult = await tryRenderWithHyperframes(projectPath, previewPath);
   if (!hyperframesResult.ok || !(await exists(previewPath))) {
     await appendLog(renderLogPath, `HyperFrames fallback: ${hyperframesResult.message}`);
-    await renderMp4(audioPath, previewPath, manifest.duration_sec, false);
+    await renderMp4(audioPath, previewPath, manifest.duration_sec, renderSettings, false);
   } else {
     await appendLog(renderLogPath, `HyperFrames render succeeded: ${hyperframesResult.message}`);
   }
-  await renderMp4(audioPath, reviewPath, manifest.duration_sec, true);
+  await renderMp4(audioPath, reviewPath, manifest.duration_sec, renderSettings, true);
 
   const keyframePath = path.join(projectPath, "qa", "render", "keyframes", "t_0000.jpg");
   await ensureDir(path.dirname(keyframePath));
@@ -459,8 +480,8 @@ export async function renderPreview(projectPath: string): Promise<void> {
     audio_hash: manifest.sha256,
     video_duration_sec: round(previewProbe.duration),
     audio_duration_sec: manifest.duration_sec,
-    fps: previewFps,
-    resolution: [previewWidth, previewHeight],
+    fps: renderSettings.fps,
+    resolution: [renderSettings.width, renderSettings.height],
     artifact_hashes: {
       "dist/preview/preview_composite.mp4": await sha256File(previewPath),
       "dist/review/preview_composite_review.mp4": await sha256File(reviewPath),
@@ -572,18 +593,28 @@ async function findHyperframesExecutable(): Promise<{ executable: string; prefix
   return { executable: "npx", prefixArgs: ["hyperframes"], label: "npx hyperframes" };
 }
 
-async function renderMp4(audioPath: string, outputPath: string, duration: number, review: boolean): Promise<void> {
+async function renderMp4(
+  audioPath: string,
+  outputPath: string,
+  duration: number,
+  renderSettings: RenderSettings,
+  review: boolean,
+): Promise<void> {
+  const boxX = Math.round(renderSettings.width * 0.075);
+  const boxY = Math.round(renderSettings.height * 0.12);
+  const boxW = Math.round(renderSettings.width * 0.85);
+  const boxH = Math.round(renderSettings.height * 0.26);
   const filters = review
     ? [
         `drawgrid=width=120:height=120:thickness=2:color=white@0.15`,
-        `drawbox=x=80:y=200:w=920:h=500:color=0x2563eb@0.35:t=fill`,
-        `drawtext=text='REVIEW':x=70:y=70:fontcolor=white:fontsize=54`,
-        `drawtext=text='%{pts\\:hms}':x=70:y=145:fontcolor=white:fontsize=36`,
+        `drawbox=x=${boxX}:y=${boxY}:w=${boxW}:h=${boxH}:color=0x2563eb@0.35:t=fill`,
+        `drawtext=text='REVIEW':x=${boxX}:y=${Math.round(renderSettings.height * 0.04)}:fontcolor=white:fontsize=54`,
+        `drawtext=text='%{pts\\:hms}':x=${boxX}:y=${Math.round(renderSettings.height * 0.1)}:fontcolor=white:fontsize=36`,
         `format=yuv420p`,
       ].join(",")
     : [
-        `drawbox=x=80:y=200:w=920:h=500:color=0x2563eb@0.35:t=fill`,
-        `drawbox=x=120:y=760:w=840:h=240:color=0xfacc15@0.30:t=fill`,
+        `drawbox=x=${boxX}:y=${boxY}:w=${boxW}:h=${boxH}:color=0x2563eb@0.35:t=fill`,
+        `drawbox=x=${Math.round(renderSettings.width * 0.11)}:y=${Math.round(renderSettings.height * 0.55)}:w=${Math.round(renderSettings.width * 0.78)}:h=${Math.round(renderSettings.height * 0.13)}:color=0xfacc15@0.30:t=fill`,
         `format=yuv420p`,
       ].join(",");
 
@@ -596,7 +627,7 @@ async function renderMp4(audioPath: string, outputPath: string, duration: number
     "-f",
     "lavfi",
     "-i",
-    `color=c=0x101820:s=${previewWidth}x${previewHeight}:r=${previewFps}:d=${duration}`,
+    `color=c=0x101820:s=${renderSettings.width}x${renderSettings.height}:r=${renderSettings.fps}:d=${duration}`,
     "-i",
     audioPath,
     "-vf",
@@ -936,15 +967,23 @@ function renderDesignDoc(): string {
   ].join("\n");
 }
 
-function renderStyles(): string {
-  return `:root{color-scheme:dark;--bg:#101820;--panel:#18324f;--accent:#facc15;--text:#f8fafc;--muted:#94a3b8}*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--text);font-family:Inter,system-ui,sans-serif}.composition{width:1080px;height:1920px;position:relative;overflow:hidden;background:linear-gradient(180deg,#101820,#122235)}.scene{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;padding:160px 96px}.card{width:888px;min-height:560px;border:2px solid rgba(248,250,252,.18);background:rgba(37,99,235,.34);padding:72px;display:flex;flex-direction:column;gap:28px}.eyebrow{font-size:34px;color:var(--accent);text-transform:uppercase}.title{font-size:82px;line-height:1.05;margin:0}.caption{font-size:42px;line-height:1.25;color:var(--text);margin:0}.safe-caption{position:absolute;left:96px;right:96px;bottom:180px;padding:28px 36px;background:rgba(16,24,32,.74);border-left:8px solid var(--accent);font-size:38px;line-height:1.25}.beat{position:absolute;right:88px;top:88px;color:var(--accent);font-size:32px}`;
+function renderStyles(renderSettings: RenderSettings): string {
+  const shortSide = Math.min(renderSettings.width, renderSettings.height);
+  const sidePad = Math.round(renderSettings.width * 0.09);
+  const topPad = Math.round(renderSettings.height * 0.08);
+  const cardWidth = Math.round(renderSettings.width * 0.82);
+  const cardMinHeight = Math.round(renderSettings.height * 0.29);
+  const cardPadding = Math.round(shortSide * 0.067);
+  const titleSize = Math.round(shortSide * 0.075);
+  const captionSize = Math.round(shortSide * 0.039);
+  return `:root{color-scheme:dark;--bg:#101820;--panel:#18324f;--accent:#facc15;--text:#f8fafc;--muted:#94a3b8}*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--text);font-family:Inter,system-ui,sans-serif}.composition{width:${renderSettings.width}px;height:${renderSettings.height}px;position:relative;overflow:hidden;background:linear-gradient(180deg,#101820,#122235)}.scene{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;padding:${topPad}px ${sidePad}px}.card{width:${cardWidth}px;max-width:100%;min-height:${cardMinHeight}px;border:2px solid rgba(248,250,252,.18);background:rgba(37,99,235,.34);padding:${cardPadding}px;display:flex;flex-direction:column;gap:28px}.eyebrow{font-size:${Math.round(shortSide * 0.031)}px;color:var(--accent);text-transform:uppercase}.title{font-size:${titleSize}px;line-height:1.05;margin:0}.caption{font-size:${captionSize}px;line-height:1.25;color:var(--text);margin:0}.safe-caption{position:absolute;left:${sidePad}px;right:${sidePad}px;bottom:${Math.round(renderSettings.height * 0.09)}px;padding:28px 36px;background:rgba(16,24,32,.74);border-left:8px solid var(--accent);font-size:${Math.round(shortSide * 0.035)}px;line-height:1.25}.beat{position:absolute;right:${Math.round(renderSettings.width * 0.08)}px;top:${Math.round(renderSettings.height * 0.045)}px;color:var(--accent);font-size:${Math.round(shortSide * 0.03)}px}`;
 }
 
-function renderMainJs(duration: number): string {
-  return `window.__timelines=window.__timelines||{};window.__timelines["qivance-preview"]={duration:function(){return ${duration};},seek:function(){},pause:function(){}};`;
+function renderMainJs(duration: number, mainComposition: string): string {
+  return `window.__timelines=window.__timelines||{};window.__timelines[${JSON.stringify(mainComposition)}]={duration:function(){return ${duration};},seek:function(){},pause:function(){}};`;
 }
 
-function renderHypeframesHtml(sectionMap: SectionMap): string {
+function renderHypeframesHtml(sectionMap: SectionMap, renderSettings: RenderSettings): string {
   const first = sectionMap.sections[0];
   const title = first?.label ?? "Qivance";
   const caption = first?.lyric_lines.join(" / ") || "Preview composite";
@@ -957,7 +996,7 @@ function renderHypeframesHtml(sectionMap: SectionMap): string {
   <title>Qivance Preview</title>
 </head>
 <body>
-  <main id="qivance-preview" class="composition" data-composition-id="qivance-preview" data-start="0" data-duration="${sectionMap.duration_sec}" data-width="${previewWidth}" data-height="${previewHeight}" data-track-index="0">
+  <main id="${escapeHtml(renderSettings.mainComposition)}" class="composition" data-composition-id="${escapeHtml(renderSettings.mainComposition)}" data-start="0" data-duration="${sectionMap.duration_sec}" data-width="${renderSettings.width}" data-height="${renderSettings.height}" data-track-index="0">
     <audio id="master-audio" data-start="0" data-duration="${sectionMap.duration_sec}" data-track-index="2" src="./public_assets/audio/minimax_rap_master.wav" data-volume="1"></audio>
     <div class="beat">BEAT LOCK</div>
     <section class="scene">
@@ -970,10 +1009,22 @@ function renderHypeframesHtml(sectionMap: SectionMap): string {
     <div class="safe-caption">${escapeHtml(caption)}</div>
   </main>
   <script src="./src/main.js"></script>
-  <script>window.__timelines=window.__timelines||{};window.__timelines["qivance-preview"]={duration:function(){return ${sectionMap.duration_sec};},seek:function(){},pause:function(){}};</script>
+  <script>window.__timelines=window.__timelines||{};window.__timelines[${JSON.stringify(renderSettings.mainComposition)}]={duration:function(){return ${sectionMap.duration_sec};},seek:function(){},pause:function(){}};</script>
 </body>
 </html>
 `;
+}
+
+async function readRenderSettings(projectPath: string): Promise<RenderSettings> {
+  const manifest = await readJson<Record<string, unknown>>(path.join(projectPath, "project_manifest.json"));
+  const videoSize = resolveVideoSize(typeof manifest.video_size === "string" ? manifest.video_size : undefined);
+  return {
+    ...videoSize,
+    mainComposition: resolveMainComposition(
+      typeof manifest.main_composition === "string" ? manifest.main_composition : undefined,
+    ),
+    fps: previewFps,
+  };
 }
 
 function escapeHtml(value: string): string {

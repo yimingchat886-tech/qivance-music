@@ -4,7 +4,22 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
 import { importAcceptedMusicProject } from "../src/lib/import-project.ts";
-import { loadProjectSummary, renderProjectWorkspace } from "../src/lib/web-ui.ts";
+import { loadProjectSummary, renderImportPage, renderProjectWorkspace } from "../src/lib/web-ui.ts";
+
+test("import UI uploads audio and exposes HypeFrames render settings without raw JSON config", () => {
+  const html = renderImportPage();
+
+  assert.match(html, /enctype="multipart\/form-data"/);
+  assert.match(html, /type="file" name="rawAudioFile"/);
+  assert.match(html, /name="topic"/);
+  assert.match(html, /name="mainComposition"/);
+  assert.match(html, /name="videoSize"/);
+  assert.match(html, /1080x1920/);
+  assert.match(html, /1920x1080/);
+  assert.doesNotMatch(html, /Input config JSON/);
+  assert.doesNotMatch(html, /name="inputConfig"/);
+  assert.doesNotMatch(html, /music_accepted/);
+});
 
 test("workspace UI exposes only post-MiniMax preview actions for the first MVP", async () => {
   const tempRoot = await mkdtemp(path.join(tmpdir(), "qivance-web-"));
@@ -12,11 +27,8 @@ test("workspace UI exposes only post-MiniMax preview actions for the first MVP",
   await writeFile(sourceAudio, Buffer.from("fake-audio-for-ui"));
   const imported = await importAcceptedMusicProject({
     storageRoot: path.join(tempRoot, "projects"),
-    inputConfig: {
-      topic: "光合作用为什么重要",
-      target_duration: 60,
-      aspect_ratio: "9:16",
-    },
+    topic: "光合作用为什么重要",
+    targetDuration: 60,
     lyricsMarkdown: "[Verse]\n叶绿体接住阳光",
     rawAudioPath: sourceAudio,
   });
@@ -37,11 +49,8 @@ test("workspace UI exposes button-style OK approvals", async () => {
   await writeFile(sourceAudio, Buffer.from("fake-audio-for-ui"));
   const imported = await importAcceptedMusicProject({
     storageRoot: path.join(tempRoot, "projects"),
-    inputConfig: {
-      topic: "为什么月亮会变圆缺",
-      target_duration: 60,
-      aspect_ratio: "9:16",
-    },
+    topic: "为什么月亮会变圆缺",
+    targetDuration: 60,
     lyricsMarkdown: "[Verse]\n月相变化不是月亮变形",
     rawAudioPath: sourceAudio,
   });

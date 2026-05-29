@@ -1,5 +1,6 @@
 import { readdir, readFile, stat } from "node:fs/promises";
 import path from "node:path";
+import { defaultMainComposition, videoSizes } from "./render-settings.ts";
 
 export type ProjectSummary = {
   projectId: string;
@@ -9,6 +10,8 @@ export type ProjectSummary = {
   targetDuration: number | null;
   actualAudioDuration: number | null;
   aspectRatio: string;
+  mainComposition: string;
+  videoSize: string;
   lockedAudioHash: string | null;
   previewVideoHash: string | null;
   hasPreview: boolean;
@@ -56,6 +59,8 @@ export async function loadProjectSummary(projectPath: string): Promise<ProjectSu
     targetDuration: numberOrNull(manifest.target_duration),
     actualAudioDuration: numberOrNull(manifest.actual_audio_duration),
     aspectRatio: String(manifest.aspect_ratio ?? "9:16"),
+    mainComposition: String(manifest.main_composition ?? defaultMainComposition),
+    videoSize: String(manifest.video_size ?? "1080x1920"),
     lockedAudioHash: nullableString(manifest.locked_audio_hash),
     previewVideoHash: nullableString(manifest.preview_video_hash),
     hasPreview: await exists(path.join(projectPath, "dist", "preview", "preview_composite.mp4")),
@@ -86,25 +91,20 @@ export function renderProjectsPage(projects: ProjectSummary[]): string {
 }
 
 export function renderImportPage(error?: string): string {
+  const videoSizeOptions = videoSizes
+    .map((size) => `<option value="${size.id}">${size.id} (${size.aspectRatio})</option>`)
+    .join("\n");
   return layout("Import accepted MiniMax music", `${error ? `<p class="error">${escapeHtml(error)}</p>` : ""}
-<form method="post" action="/projects/import" class="stack">
-  <label>Raw audio path on this machine<input name="rawAudioPath" placeholder="/absolute/path/minimax_rap_raw.mp3" required></label>
-  <label>Input config JSON<textarea name="inputConfig" rows="12" required>{
-  "topic": "恒星为什么会发光",
-  "target_duration": 60,
-  "audience": "泛科普用户",
-  "tone": "热血",
-  "rap_style": "boom bap",
-  "aspect_ratio": "9:16",
-  "platform": "douyin",
-  "auto_continue": false,
-  "auto_approve_music": true,
-  "auto_approve_preview": false
-}</textarea></label>
+<form method="post" action="/projects/import" enctype="multipart/form-data" class="stack">
+  <label>Audio file<input type="file" name="rawAudioFile" accept="audio/*" required></label>
+  <label>Topic<input name="topic" value="恒星为什么会发光" required></label>
+  <label>Target duration seconds<input type="number" name="targetDuration" min="1" step="1" value="60" required></label>
+  <label>Main composition<input name="mainComposition" value="${defaultMainComposition}" required></label>
+  <label>Video size<select name="videoSize" required>${videoSizeOptions}</select></label>
   <label>Lyrics markdown<textarea name="lyricsMarkdown" rows="10" required>[Verse]
 恒星核心在聚变
 光和热一起冲出来</textarea></label>
-  <button type="submit">导入并置为 music_accepted</button>
+  <button type="submit">导入并进入音频锁定</button>
 </form>`);
 }
 
@@ -135,6 +135,8 @@ export function renderProjectWorkspace(project: ProjectSummary): string {
       <dt>ID</dt><dd><code>${escapeHtml(project.projectId)}</code></dd>
       <dt>Status</dt><dd><code>${escapeHtml(project.workflowState)}</code></dd>
       <dt>Aspect</dt><dd>${escapeHtml(project.aspectRatio)}</dd>
+      <dt>Composition</dt><dd><code>${escapeHtml(project.mainComposition)}</code></dd>
+      <dt>Video size</dt><dd>${escapeHtml(project.videoSize)}</dd>
       <dt>Target duration</dt><dd>${project.targetDuration ?? "-"}</dd>
       <dt>Actual audio duration</dt><dd>${project.actualAudioDuration ?? "-"}</dd>
       <dt>Locked audio hash</dt><dd><code>${escapeHtml(project.lockedAudioHash ?? "-")}</code></dd>
@@ -174,7 +176,7 @@ function layout(title: string, body: string): string {
     a{color:#79c0ff;text-decoration:none}.button,button{display:inline-flex;align-items:center;min-height:36px;border:1px solid var(--accent);border-radius:6px;background:var(--accent);color:white;padding:0 14px;font-weight:650;cursor:pointer}
     table{width:100%;border-collapse:collapse;background:var(--panel);border:1px solid var(--border);border-radius:8px;overflow:hidden}th,td{padding:12px;border-bottom:1px solid var(--border);text-align:left}th{color:var(--muted)}
     .grid{display:grid;grid-template-columns:1fr 1fr;gap:16px}.stack{display:grid;gap:16px;max-width:820px}article{background:var(--panel);border:1px solid var(--border);border-radius:8px;padding:18px}
-    label{display:grid;gap:8px;color:var(--muted)}input,textarea{width:100%;border:1px solid var(--border);border-radius:6px;background:#010409;color:var(--text);padding:10px;font:13px/1.45 ui-monospace,SFMono-Regular,Menlo,monospace}
+    label{display:grid;gap:8px;color:var(--muted)}input,textarea,select{width:100%;border:1px solid var(--border);border-radius:6px;background:#010409;color:var(--text);padding:10px;font:13px/1.45 ui-monospace,SFMono-Regular,Menlo,monospace}
     dl{display:grid;grid-template-columns:160px 1fr;gap:8px 12px}dt{color:var(--muted)}dd{margin:0;min-width:0;overflow-wrap:anywhere}video{width:100%;max-height:560px;background:#010409}.error{color:#ff7b72}.success{color:#7ee787}
     @media(max-width:800px){header,main{padding:16px}.grid{grid-template-columns:1fr}dl{grid-template-columns:1fr}}
   </style>

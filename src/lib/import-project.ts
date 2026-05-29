@@ -1,29 +1,21 @@
 import { copyFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
+import { materializeAudioAsset } from "./audio-db.ts";
 import { ensureDir, sha256File, writeJson } from "./fs-utils.ts";
 import { parseLyrics, type StructuredLyrics } from "./lyrics.ts";
+import { resolveMainComposition, resolveVideoSize } from "./render-settings.ts";
 import type { WorkflowState } from "./workflow.ts";
-
-export type InputConfig = {
-  topic: string;
-  target_duration: number;
-  audience?: string;
-  tone?: string;
-  rap_style?: string;
-  aspect_ratio?: string;
-  platform?: string;
-  budget_limit?: number;
-  auto_continue?: boolean;
-  auto_approve_music?: boolean;
-  auto_approve_preview?: boolean;
-};
 
 export type ImportAcceptedMusicProjectInput = {
   storageRoot: string;
-  inputConfig: InputConfig;
+  topic: string;
+  targetDuration?: number;
   lyricsMarkdown: string;
-  rawAudioPath: string;
+  rawAudioPath?: string;
+  audioAssetId?: string;
+  mainComposition?: string;
+  videoSize?: string;
   lyricsStructured?: StructuredLyrics;
   selectedMusicPrompt?: Record<string, unknown>;
   projectBriefMarkdown?: string;
@@ -72,10 +64,10 @@ export async function importAcceptedMusicProject(
   await ensureDir(projectPath);
   await Promise.all(projectDirs.map((dir) => ensureDir(path.join(projectPath, dir))));
 
-  const rawExtension = path.extname(input.rawAudioPath).toLowerCase() || ".mp3";
-  const rawAudioFile = `minimax_rap_raw${rawExtension}`;
-  const rawAudioDestination = path.join(projectPath, "audio", "raw", rawAudioFile);
-  await copyFile(input.rawAudioPath, rawAudioDestination);
+  const rawAudio = await writeRawAudio(input, projectPath);
+  const videoSize = resolveVideoSize(input.videoSize);
+  const mainComposition = resolveMainComposition(input.mainComposition);
+  const targetDuration = input.targetDuration ?? 60;
 
   const lyricsStructured = input.lyricsStructured ?? parseLyrics(input.lyricsMarkdown);
   const selectedMusicPrompt =
@@ -85,10 +77,14 @@ export async function importAcceptedMusicProject(
       notes: "MiniMax Music generation happened outside this MVP.",
     };
 
-  await writeJson(path.join(projectPath, "input", "input_config.json"), input.inputConfig);
   await writeFile(
     path.join(projectPath, "input", "project_brief.md"),
-    input.projectBriefMarkdown ?? renderProjectBrief(input.inputConfig),
+    input.projectBriefMarkdown ?? renderProjectBrief({
+      topic: input.topic,
+      targetDuration,
+      mainComposition,
+      videoSize: videoSize.id,
+    }),
     "utf8",
   );
   await writeFile(path.join(projectPath, "data", "lyrics", "lyrics.md"), input.lyricsMarkdown, "utf8");
@@ -97,21 +93,27 @@ export async function importAcceptedMusicProject(
     provider: "external_minimax",
     prompt: selectedMusicPrompt,
     lyrics_path: "data/lyrics/lyrics.md",
-    raw_audio_path: `audio/raw/${rawAudioFile}`,
+    audio_asset_id: input.audioAssetId ?? null,
+    raw_audio_path: `audio/raw/${rawAudio.filename}`,
     created_at: new Date().toISOString(),
   });
 
-  const rawAudioHash = await sha256File(rawAudioDestination);
+  const rawAudioHash = await sha256File(rawAudio.path);
   const now = new Date().toISOString();
 
   await writeJson(path.join(projectPath, "project_manifest.json"), {
     project_id: projectId,
     workspace_id: "local",
     created_by_type: "human",
-    topic: input.inputConfig.topic,
-    target_duration: input.inputConfig.target_duration,
+    topic: input.topic,
+    target_duration: targetDuration,
     actual_audio_duration: null,
-    aspect_ratio: input.inputConfig.aspect_ratio ?? "9:16",
+    aspect_ratio: videoSize.aspectRatio,
+    audio_asset_id: input.audioAssetId ?? null,
+    main_composition: mainComposition,
+    video_size: videoSize.id,
+    video_width: videoSize.width,
+    video_height: videoSize.height,
     current_workflow_state: workflowState,
     locked_audio_hash: null,
     preview_video_hash: null,
@@ -123,10 +125,6 @@ export async function importAcceptedMusicProject(
     project_id: projectId,
     current_assets: [
       {
-        type: "input_config",
-        path: "input/input_config.json",
-      },
-      {
         type: "lyrics",
         path: "data/lyrics/lyrics.md",
       },
@@ -136,8 +134,9 @@ export async function importAcceptedMusicProject(
       },
       {
         type: "raw_audio",
-        path: `audio/raw/${rawAudioFile}`,
+        path: `audio/raw/${rawAudio.filename}`,
         hash: rawAudioHash,
+        audio_asset_id: input.audioAssetId ?? null,
       },
     ],
     updated_at: now,
@@ -154,12 +153,11 @@ export async function importAcceptedMusicProject(
     project_id: projectId,
     workflow_state: workflowState,
     input_artifacts: [
-      "input/input_config.json",
       "input/project_brief.md",
       "data/lyrics/lyrics.md",
       "data/lyrics/lyrics_structured.json",
       "audio/minimax_request_manifest.json",
-      `audio/raw/${rawAudioFile}`,
+      `audio/raw/${rawAudio.filename}`,
     ],
     raw_audio_hash: rawAudioHash,
     created_at: now,
@@ -179,16 +177,38 @@ export async function importAcceptedMusicProject(
   return { projectId, projectPath, workflowState };
 }
 
-function renderProjectBrief(inputConfig: InputConfig): string {
+async function writeRawAudio(
+  input: ImportAcceptedMusicProjectInput,
+  projectPath: string,
+): Promise<{ filename: string; path: string }> {
+  const rawAudioDir = path.join(projectPath, "audio", "raw");
+  if (input.audioAssetId) {
+    const materialized = await materializeAudioAsset(input.storageRoot, input.audioAssetId, rawAudioDir, "minimax_rap_raw");
+    return { filename: materialized.filename, path: materialized.path };
+  }
+  if (!input.rawAudioPath) {
+    throw new Error("Import requires an uploaded audio asset or a raw audio path.");
+  }
+
+  const rawExtension = path.extname(input.rawAudioPath).toLowerCase() || ".mp3";
+  const rawAudioFile = `minimax_rap_raw${rawExtension}`;
+  const rawAudioDestination = path.join(rawAudioDir, rawAudioFile);
+  await copyFile(input.rawAudioPath, rawAudioDestination);
+  return { filename: rawAudioFile, path: rawAudioDestination };
+}
+
+function renderProjectBrief(input: {
+  topic: string;
+  targetDuration: number;
+  mainComposition: string;
+  videoSize: string;
+}): string {
   return [
-    `# ${inputConfig.topic}`,
+    `# ${input.topic}`,
     "",
-    `- Target duration: ${inputConfig.target_duration}s`,
-    `- Audience: ${inputConfig.audience ?? "unspecified"}`,
-    `- Tone: ${inputConfig.tone ?? "unspecified"}`,
-    `- Rap style: ${inputConfig.rap_style ?? "unspecified"}`,
-    `- Aspect ratio: ${inputConfig.aspect_ratio ?? "9:16"}`,
-    `- Platform: ${inputConfig.platform ?? "unspecified"}`,
+    `- Target duration: ${input.targetDuration}s`,
+    `- Main composition: ${input.mainComposition}`,
+    `- Video size: ${input.videoSize}`,
     "",
   ].join("\n");
 }

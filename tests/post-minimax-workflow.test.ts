@@ -38,19 +38,10 @@ test("runs the post-MiniMax workflow from accepted audio to preview assets", asy
 
   const project = await importAcceptedMusicProject({
     storageRoot: path.join(tempRoot, "projects"),
-    inputConfig: {
-      topic: "恒星为什么会发光",
-      target_duration: 60,
-      audience: "泛科普用户",
-      tone: "热血",
-      rap_style: "boom bap",
-      aspect_ratio: "9:16",
-      platform: "douyin",
-      budget_limit: 0,
-      auto_continue: false,
-      auto_approve_music: true,
-      auto_approve_preview: false,
-    },
+    topic: "恒星为什么会发光",
+    targetDuration: 60,
+    mainComposition: "science-horizontal",
+    videoSize: "1920x1080",
     lyricsMarkdown: "[Intro]\n恒星点亮夜空\n\n[Verse]\n核心里面在聚变\n氢原子合成氦\n\n[Hook]\n光和热一起冲出来",
     rawAudioPath: sourceAudio,
   });
@@ -86,6 +77,16 @@ test("runs the post-MiniMax workflow from accepted audio to preview assets", asy
   const renderQa = JSON.parse(
     await readFile(path.join(project.projectPath, "qa", "render", "render_qa_report.json"), "utf8"),
   );
+  const hypeframesConfig = JSON.parse(
+    await readFile(path.join(project.projectPath, "hypeframes", "src", "config.json"), "utf8"),
+  );
+  const hypeframesHtml = await readFile(path.join(project.projectPath, "hypeframes", "src", "index.html"), "utf8");
+  const renderPlan = JSON.parse(
+    await readFile(path.join(project.projectPath, "data", "storyboard", "render_plan.json"), "utf8"),
+  );
+  const renderManifest = JSON.parse(
+    await readFile(path.join(project.projectPath, "dist", "render_manifest.json"), "utf8"),
+  );
   const masterQa = JSON.parse(
     await readFile(path.join(project.projectPath, "qa", "master_qa_report.json"), "utf8"),
   );
@@ -96,6 +97,12 @@ test("runs the post-MiniMax workflow from accepted audio to preview assets", asy
   assert.equal(beatsLocked.audio_hash, musicManifest.sha256);
   assert.ok(Math.abs(beatsLocked.bpm - 120) <= 4);
   assert.equal(beatsLocked.lock_method, "audio_analysis");
+  assert.equal(hypeframesConfig.main_composition, "science-horizontal");
+  assert.equal(hypeframesConfig.width, 1920);
+  assert.equal(hypeframesConfig.height, 1080);
+  assert.match(hypeframesHtml, /id="science-horizontal"/);
+  assert.deepEqual(renderPlan.resolution, [1920, 1080]);
+  assert.deepEqual(renderManifest.resolution, [1920, 1080]);
   assert.equal(renderQa.status, "rule_pass");
   assert.equal(masterQa.status, "rule_pass");
   assert.equal(workflowSnapshot.workflow_state, "hypeframes_video_ready");

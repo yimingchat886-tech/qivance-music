@@ -1,9 +1,12 @@
 import { createReadStream } from "node:fs";
 import { mkdir } from "node:fs/promises";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
+import { networkInterfaces } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { importAcceptedMusicProject, type InputConfig } from "./lib/import-project.ts";
+import { saveAudioAsset } from "./lib/audio-db.ts";
+import { importAcceptedMusicProject } from "./lib/import-project.ts";
+import { parseMultipartForm, type MultipartForm } from "./lib/multipart-form.ts";
 import {
   approvePreview,
   approveScenePlan,
@@ -14,6 +17,7 @@ import {
   lockAcceptedMusic,
   renderPreview,
 } from "./lib/post-minimax-workflow.ts";
+import { formatStartupMessage } from "./lib/server-urls.ts";
 import {
   listProjectSummaries,
   loadProjectSummary,
@@ -26,6 +30,7 @@ import {
 const rootDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const storageRoot = process.env.QIVANCE_PROJECTS_ROOT ?? path.join(rootDir, "projects");
 const port = Number(process.env.PORT ?? 3000);
+const host = process.env.HOST?.trim() || "0.0.0.0";
 
 await mkdir(storageRoot, { recursive: true });
 
@@ -38,8 +43,10 @@ const server = createServer(async (request, response) => {
   }
 });
 
-server.listen(port, () => {
-  console.log(`Qivance Music local MVP: http://127.0.0.1:${port}/projects`);
+server.listen(port, host, () => {
+  const address = server.address();
+  const actualPort = typeof address === "object" && address ? address.port : port;
+  console.log(formatStartupMessage({ host, port: actualPort, interfaces: networkInterfaces() }));
 });
 
 async function route(request: IncomingMessage, response: ServerResponse): Promise<void> {
@@ -57,13 +64,21 @@ async function route(request: IncomingMessage, response: ServerResponse): Promis
     return;
   }
   if (request.method === "POST" && url.pathname === "/projects/import") {
-    const form = await readForm(request);
-    const inputConfig = JSON.parse(required(form, "inputConfig")) as InputConfig;
+    const form = parseMultipartForm(String(request.headers["content-type"] ?? ""), await readBody(request));
+    const audioFile = requiredFile(form, "rawAudioFile");
+    const audioAsset = await saveAudioAsset(storageRoot, {
+      filename: audioFile.filename,
+      mimeType: audioFile.mimeType,
+      data: audioFile.data,
+    });
     const imported = await importAcceptedMusicProject({
       storageRoot,
-      inputConfig,
-      lyricsMarkdown: required(form, "lyricsMarkdown"),
-      rawAudioPath: required(form, "rawAudioPath"),
+      topic: requiredField(form, "topic"),
+      targetDuration: requiredPositiveNumber(form, "targetDuration"),
+      lyricsMarkdown: requiredField(form, "lyricsMarkdown"),
+      audioAssetId: audioAsset.id,
+      mainComposition: requiredField(form, "mainComposition"),
+      videoSize: requiredField(form, "videoSize"),
     });
     redirect(response, `/projects/${encodeURIComponent(imported.projectId)}`);
     return;
@@ -146,18 +161,34 @@ function redirect(response: ServerResponse, location: string): void {
   response.end();
 }
 
-async function readForm(request: IncomingMessage): Promise<URLSearchParams> {
+async function readBody(request: IncomingMessage): Promise<Buffer> {
   const chunks = [];
   for await (const chunk of request) {
     chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
   }
-  return new URLSearchParams(Buffer.concat(chunks).toString("utf8"));
+  return Buffer.concat(chunks);
 }
 
-function required(form: URLSearchParams, name: string): string {
-  const value = form.get(name);
+function requiredField(form: MultipartForm, name: string): string {
+  const value = form.fields.get(name)?.trim();
   if (!value) {
     throw new Error(`Missing form field ${name}`);
+  }
+  return value;
+}
+
+function requiredPositiveNumber(form: MultipartForm, name: string): number {
+  const value = Number(requiredField(form, name));
+  if (!Number.isFinite(value) || value <= 0) {
+    throw new Error(`Invalid numeric form field ${name}`);
+  }
+  return value;
+}
+
+function requiredFile(form: MultipartForm, name: string): { filename: string; mimeType: string; data: Buffer } {
+  const value = form.files.get(name);
+  if (!value || value.data.byteLength === 0) {
+    throw new Error(`Missing form file ${name}`);
   }
   return value;
 }
