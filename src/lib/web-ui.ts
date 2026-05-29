@@ -1,5 +1,7 @@
 import { readdir, readFile, stat } from "node:fs/promises";
 import path from "node:path";
+import { loadGateProgress, type GateProgressStep } from "./gate-progress.ts";
+import { buildHyperframesStudioUrl, loadHyperframesUiStatus, type HyperframesUiStatus } from "./hyperframes-ui.ts";
 import { defaultMainComposition, videoSizes } from "./render-settings.ts";
 
 export type ProjectSummary = {
@@ -15,6 +17,8 @@ export type ProjectSummary = {
   lockedAudioHash: string | null;
   previewVideoHash: string | null;
   hasPreview: boolean;
+  gateProgress: GateProgressStep[];
+  hyperframesUi: HyperframesUiStatus;
   availableDownloads: Array<{ label: string; relativePath: string }>;
 };
 
@@ -32,7 +36,7 @@ export async function listProjectSummaries(storageRoot: string): Promise<Project
   }
 }
 
-export async function loadProjectSummary(projectPath: string): Promise<ProjectSummary> {
+export async function loadProjectSummary(projectPath: string, requestHost?: string): Promise<ProjectSummary> {
   const manifest = await readJson<Record<string, unknown>>(path.join(projectPath, "project_manifest.json"));
   const projectId = String(manifest.project_id);
   const downloads = [
@@ -51,6 +55,7 @@ export async function loadProjectSummary(projectPath: string): Promise<ProjectSu
     }
   }
 
+  const hyperframesUi = await loadHyperframesUiStatus(projectPath);
   return {
     projectId,
     projectPath,
@@ -64,6 +69,8 @@ export async function loadProjectSummary(projectPath: string): Promise<ProjectSu
     lockedAudioHash: nullableString(manifest.locked_audio_hash),
     previewVideoHash: nullableString(manifest.preview_video_hash),
     hasPreview: await exists(path.join(projectPath, "dist", "preview", "preview_composite.mp4")),
+    gateProgress: await loadGateProgress(projectPath),
+    hyperframesUi: rewriteHyperframesUrl(hyperframesUi, requestHost),
     availableDownloads,
   };
 }
@@ -108,7 +115,7 @@ export function renderImportPage(error?: string): string {
 </form>`);
 }
 
-export function renderProjectWorkspace(project: ProjectSummary): string {
+export function renderProjectWorkspace(project: ProjectSummary, options: { error?: string } = {}): string {
   const downloads = project.availableDownloads.length === 0
     ? "<li>No downloads yet.</li>"
     : project.availableDownloads
@@ -128,7 +135,8 @@ export function renderProjectWorkspace(project: ProjectSummary): string {
       ? `<p class="success">Preview workflow complete. Assets are ready to download.</p>`
       : `<p>Current status does not expose a manual action in this first MVP.</p>`;
 
-  return layout(project.topic, `<section class="grid">
+  return layout(project.topic, `${options.error ? `<p class="error">${escapeHtml(options.error)}</p>` : ""}${renderGateProgress(project.gateProgress)}
+<section class="grid">
   <article>
     <h2>Project</h2>
     <dl>
@@ -148,8 +156,12 @@ export function renderProjectWorkspace(project: ProjectSummary): string {
     <p>本版只展示导入的已接受音乐、歌词和音频 manifest，不提供 MiniMax 生成或重新生成入口。</p>
   </article>
   <article>
-    <h2>Video</h2>
-    ${project.hasPreview ? `<video controls src="/projects/${encodeURIComponent(project.projectId)}/download?path=dist%2Fpreview%2Fpreview_composite.mp4"></video>` : "<p>Preview not rendered yet.</p>"}
+    <h2>Storyboard Import</h2>
+    ${renderStoryboardImport(project)}
+  </article>
+  <article>
+    <h2>HyperFrames UI</h2>
+    ${renderHyperframesUi(project)}
   </article>
   <article>
     <h2>QA / Export</h2>
@@ -177,7 +189,8 @@ function layout(title: string, body: string): string {
     table{width:100%;border-collapse:collapse;background:var(--panel);border:1px solid var(--border);border-radius:8px;overflow:hidden}th,td{padding:12px;border-bottom:1px solid var(--border);text-align:left}th{color:var(--muted)}
     .grid{display:grid;grid-template-columns:1fr 1fr;gap:16px}.stack{display:grid;gap:16px;max-width:820px}article{background:var(--panel);border:1px solid var(--border);border-radius:8px;padding:18px}
     label{display:grid;gap:8px;color:var(--muted)}input,textarea,select{width:100%;border:1px solid var(--border);border-radius:6px;background:#010409;color:var(--text);padding:10px;font:13px/1.45 ui-monospace,SFMono-Regular,Menlo,monospace}
-    dl{display:grid;grid-template-columns:160px 1fr;gap:8px 12px}dt{color:var(--muted)}dd{margin:0;min-width:0;overflow-wrap:anywhere}video{width:100%;max-height:560px;background:#010409}.error{color:#ff7b72}.success{color:#7ee787}
+    dl{display:grid;grid-template-columns:160px 1fr;gap:8px 12px}dt{color:var(--muted)}dd{margin:0;min-width:0;overflow-wrap:anywhere}.error{color:#ff7b72}.success{color:#7ee787}
+    .progress{margin-bottom:16px;background:var(--panel);border:1px solid var(--border);border-radius:8px;padding:18px}.progress ol{display:grid;grid-template-columns:repeat(6,1fr);gap:8px;list-style:none;margin:0;padding:0}.progress li{border:1px solid var(--border);border-radius:6px;padding:10px;min-width:0}.status-pass{border-color:#238636!important}.status-warning{border-color:#d29922!important}.status-fail{border-color:#da3633!important}.status-running{border-color:var(--accent)!important}.status-pending{color:var(--muted)}iframe{width:100%;min-height:520px;border:1px solid var(--border);border-radius:6px;background:#010409}
     @media(max-width:800px){header,main{padding:16px}.grid{grid-template-columns:1fr}dl{grid-template-columns:1fr}}
   </style>
 </head>
@@ -186,6 +199,45 @@ function layout(title: string, body: string): string {
   <main>${body}</main>
 </body>
 </html>`;
+}
+
+function renderGateProgress(progress: GateProgressStep[]): string {
+  const steps = progress
+    .map((step) => `<li class="status-${step.status}">
+  <strong>${escapeHtml(step.label)}</strong><br>
+  <code>${escapeHtml(step.status)}</code>
+  ${step.issues.length > 0 ? `<p class="error">${escapeHtml(step.issues.join(" "))}</p>` : ""}
+  ${step.warnings.length > 0 ? `<p>${escapeHtml(step.warnings.join(" "))}</p>` : ""}
+</li>`)
+    .join("\n");
+  return `<section class="progress"><h2>Gate Progress</h2><ol>${steps}</ol></section>`;
+}
+
+function renderStoryboardImport(project: ProjectSummary): string {
+  return `<form method="post" action="/projects/${encodeURIComponent(project.projectId)}/storyboard/import" class="stack">
+  <label>Storyboard JSON<textarea name="storyboardJson" rows="10" placeholder='{"scenes":[],"captions":[],"visuals":[]}' required></textarea></label>
+  <button type="submit">导入外部 LLM 分镜脚本</button>
+</form>`;
+}
+
+function renderHyperframesUi(project: ProjectSummary): string {
+  const startForm = `<form method="post" action="/projects/${encodeURIComponent(project.projectId)}/hyperframes-ui/start"><button type="submit">启动 HyperFrames UI</button></form>`;
+  if (project.hyperframesUi.status === "not_started") {
+    return `${startForm}<p>HyperFrames UI not started yet.</p>`;
+  }
+  const url = project.hyperframesUi.url;
+  const status = `<p>Status: <code>${escapeHtml(project.hyperframesUi.status)}</code> · <a href="${escapeHtml(url)}">${escapeHtml(url)}</a></p>`;
+  return `${startForm}${status}${project.hyperframesUi.status === "running" ? `<iframe src="${escapeHtml(url)}" title="HyperFrames UI"></iframe>` : ""}`;
+}
+
+function rewriteHyperframesUrl(status: HyperframesUiStatus, requestHost?: string): HyperframesUiStatus {
+  if (!requestHost || status.status === "not_started") {
+    return status;
+  }
+  return {
+    ...status,
+    url: buildHyperframesStudioUrl({ requestHost, port: status.port, projectName: "hypeframes" }),
+  };
 }
 
 async function readJson<T>(filePath: string): Promise<T> {

@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -93,3 +93,49 @@ test("workspace UI exposes button-style OK approvals", async () => {
   assert.match(html, /OK，Preview 通过并登记成品/);
   assert.match(html, /approve-preview/);
 });
+
+test("workspace UI shows gate progress, storyboard paste, and embedded HyperFrames UI instead of inline video", async () => {
+  const tempRoot = await mkdtemp(path.join(tmpdir(), "qivance-web-hyperframes-"));
+  const sourceAudio = path.join(tempRoot, "raw.mp3");
+  await writeFile(sourceAudio, Buffer.from("fake-audio-for-ui"));
+  const imported = await importAcceptedMusicProject({
+    storageRoot: path.join(tempRoot, "projects"),
+    topic: "太阳风从哪里来",
+    targetDuration: 60,
+    lyricsMarkdown: "[Verse]\n太阳喷出带电粒子",
+    rawAudioPath: sourceAudio,
+  });
+  await writeJson(path.join(imported.projectPath, "qa", "music", "music_ingest_qa_report.json"), {
+    status: "rule_pass",
+  });
+  await writeJson(path.join(imported.projectPath, "qa", "timing", "timing_qa_report.json"), {
+    status: "rule_fail_blocked",
+    blocking_issues: ["Section map overlaps."],
+  });
+  await writeJson(path.join(imported.projectPath, "logs", "hyperframes_ui.json"), {
+    project_id: imported.projectId,
+    status: "running",
+    pid: process.pid,
+    port: 3999,
+    host: "0.0.0.0",
+    url: "http://192.168.1.25:3999/#project/hypeframes",
+    started_at: "2026-05-29T00:00:00.000Z",
+  });
+
+  const summary = await loadProjectSummary(imported.projectPath);
+  const html = renderProjectWorkspace(summary);
+
+  assert.match(html, /Gate Progress/);
+  assert.match(html, /Music Ingest/);
+  assert.match(html, /Section map overlaps\./);
+  assert.match(html, /name="storyboardJson"/);
+  assert.match(html, /storyboard\/import/);
+  assert.match(html, /hyperframes-ui\/start/);
+  assert.match(html, /<iframe[^>]+src="http:\/\/192\.168\.1\.25:3999\/#project\/hypeframes"/);
+  assert.doesNotMatch(html, /<video controls/);
+});
+
+async function writeJson(filePath: string, value: unknown): Promise<void> {
+  await mkdir(path.dirname(filePath), { recursive: true });
+  await writeFile(filePath, JSON.stringify(value), "utf8");
+}

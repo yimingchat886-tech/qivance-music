@@ -17,6 +17,8 @@ import {
   lockAcceptedMusic,
   renderPreview,
 } from "./lib/post-minimax-workflow.ts";
+import { importPastedStoryboard, startProjectHyperframesUi } from "./lib/project-actions.ts";
+import { loadHyperframesUiStatus } from "./lib/hyperframes-ui.ts";
 import { formatStartupMessage } from "./lib/server-urls.ts";
 import {
   listProjectSummaries,
@@ -87,7 +89,7 @@ async function route(request: IncomingMessage, response: ServerResponse): Promis
   const runMatch = url.pathname.match(/^\/projects\/([^/]+)\/run-preview$/);
   if (request.method === "POST" && runMatch) {
     const projectId = decodeURIComponent(runMatch[1]);
-    await runPostMinimaxToSceneApproval(path.join(storageRoot, projectId));
+    await runPostMinimaxToSceneApproval(projectPathForId(projectId));
     redirect(response, `/projects/${encodeURIComponent(projectId)}`);
     return;
   }
@@ -95,7 +97,7 @@ async function route(request: IncomingMessage, response: ServerResponse): Promis
   const approveSceneMatch = url.pathname.match(/^\/projects\/([^/]+)\/approve-scene$/);
   if (request.method === "POST" && approveSceneMatch) {
     const projectId = decodeURIComponent(approveSceneMatch[1]);
-    const projectPath = path.join(storageRoot, projectId);
+    const projectPath = projectPathForId(projectId);
     await approveScenePlan(projectPath);
     await generateHypeframesProject(projectPath);
     await renderPreview(projectPath);
@@ -106,8 +108,51 @@ async function route(request: IncomingMessage, response: ServerResponse): Promis
   const approvePreviewMatch = url.pathname.match(/^\/projects\/([^/]+)\/approve-preview$/);
   if (request.method === "POST" && approvePreviewMatch) {
     const projectId = decodeURIComponent(approvePreviewMatch[1]);
-    await approvePreview(path.join(storageRoot, projectId));
+    await approvePreview(projectPathForId(projectId));
     redirect(response, `/projects/${encodeURIComponent(projectId)}`);
+    return;
+  }
+
+  const storyboardImportMatch = url.pathname.match(/^\/projects\/([^/]+)\/storyboard\/import$/);
+  if (request.method === "POST" && storyboardImportMatch) {
+    const projectId = decodeURIComponent(storyboardImportMatch[1]);
+    const projectPath = projectPathForId(projectId);
+    try {
+      await importPastedStoryboard(projectPath, await readBody(request));
+      redirect(response, `/projects/${encodeURIComponent(projectId)}`);
+    } catch (error) {
+      response.writeHead(400, { "content-type": "text/html; charset=utf-8" });
+      response.end(renderProjectWorkspace(await loadProjectSummary(projectPath, request.headers.host), {
+        error: error instanceof Error ? error.message : String(error),
+      }));
+    }
+    return;
+  }
+
+  const startHyperframesUiMatch = url.pathname.match(/^\/projects\/([^/]+)\/hyperframes-ui\/start$/);
+  if (request.method === "POST" && startHyperframesUiMatch) {
+    const projectId = decodeURIComponent(startHyperframesUiMatch[1]);
+    const projectPath = projectPathForId(projectId);
+    try {
+      await startProjectHyperframesUi({
+        projectPath,
+        projectId,
+        requestHost: request.headers.host,
+      });
+      redirect(response, `/projects/${encodeURIComponent(projectId)}`);
+    } catch (error) {
+      response.writeHead(400, { "content-type": "text/html; charset=utf-8" });
+      response.end(renderProjectWorkspace(await loadProjectSummary(projectPath, request.headers.host), {
+        error: error instanceof Error ? error.message : String(error),
+      }));
+    }
+    return;
+  }
+
+  const hyperframesUiStatusMatch = url.pathname.match(/^\/projects\/([^/]+)\/hyperframes-ui\/status$/);
+  if (request.method === "GET" && hyperframesUiStatusMatch) {
+    const projectId = decodeURIComponent(hyperframesUiStatusMatch[1]);
+    sendJson(response, await loadHyperframesUiStatus(projectPathForId(projectId)));
     return;
   }
 
@@ -115,14 +160,14 @@ async function route(request: IncomingMessage, response: ServerResponse): Promis
   if (request.method === "GET" && downloadMatch) {
     const projectId = decodeURIComponent(downloadMatch[1]);
     const relativePath = url.searchParams.get("path") ?? "";
-    await sendDownload(response, path.join(storageRoot, projectId), relativePath);
+    await sendDownload(response, projectPathForId(projectId), relativePath);
     return;
   }
 
   const projectMatch = url.pathname.match(/^\/projects\/([^/]+)$/);
   if (request.method === "GET" && projectMatch) {
     const projectId = decodeURIComponent(projectMatch[1]);
-    sendHtml(response, renderProjectWorkspace(await loadProjectSummary(path.join(storageRoot, projectId))));
+    sendHtml(response, renderProjectWorkspace(await loadProjectSummary(projectPathForId(projectId), request.headers.host)));
     return;
   }
 
@@ -154,6 +199,11 @@ async function sendDownload(response: ServerResponse, projectPath: string, relat
 function sendHtml(response: ServerResponse, html: string): void {
   response.writeHead(200, { "content-type": "text/html; charset=utf-8" });
   response.end(html);
+}
+
+function sendJson(response: ServerResponse, value: unknown): void {
+  response.writeHead(200, { "content-type": "application/json; charset=utf-8" });
+  response.end(JSON.stringify(value));
 }
 
 function redirect(response: ServerResponse, location: string): void {
@@ -191,6 +241,13 @@ function requiredFile(form: MultipartForm, name: string): { filename: string; mi
     throw new Error(`Missing form file ${name}`);
   }
   return value;
+}
+
+function projectPathForId(projectId: string): string {
+  if (!/^project_[a-zA-Z0-9_-]+$/.test(projectId)) {
+    throw new Error("Invalid project id.");
+  }
+  return path.join(storageRoot, projectId);
 }
 
 function contentType(relativePath: string): string {
