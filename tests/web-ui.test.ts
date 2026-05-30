@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
 import { importAcceptedMusicProject } from "../src/lib/import-project.ts";
-import { loadProjectSummary, renderImportPage, renderProjectWorkspace } from "../src/lib/web-ui.ts";
+import { loadProjectSummary, renderHyperframesPage, renderImportPage, renderProjectWorkspace } from "../src/lib/web-ui.ts";
 
 test("import UI uploads audio and exposes HypeFrames render settings without raw JSON config", () => {
   const html = renderImportPage();
@@ -94,7 +94,7 @@ test("workspace UI exposes button-style OK approvals", async () => {
   assert.match(html, /approve-preview/);
 });
 
-test("workspace UI shows gate progress, storyboard paste, and embedded HyperFrames UI instead of inline video", async () => {
+test("workspace UI shows gate progress, storyboard paste, HyperFrames subpage link, and grouped artifacts", async () => {
   const tempRoot = await mkdtemp(path.join(tmpdir(), "qivance-web-hyperframes-"));
   const sourceAudio = path.join(tempRoot, "raw.mp3");
   await writeFile(sourceAudio, Buffer.from("fake-audio-for-ui"));
@@ -128,14 +128,78 @@ test("workspace UI shows gate progress, storyboard paste, and embedded HyperFram
   assert.match(html, /Gate Progress/);
   assert.match(html, /Music Ingest/);
   assert.match(html, /Section map overlaps\./);
+  assert.match(html, /Artifacts: 3 \/ 6/);
+  assert.match(html, /QA: <code>qa\/music\/music_ingest_qa_report\.json<\/code>/);
   assert.match(html, /name="storyboardJson"/);
   assert.match(html, /storyboard\/import/);
   assert.match(html, /hyperframes-ui\/start/);
-  assert.match(html, /<iframe[^>]+src="http:\/\/192\.168\.1\.25:3999\/#project\/hypeframes"/);
+  assert.match(html, new RegExp('/projects/' + imported.projectId + '/hyperframes'));
+  assert.match(html, /打开 HyperFrames 子页面/);
+  assert.doesNotMatch(html, /<iframe\b/);
+  assert.match(html, /Music Lock \/ Audio Ingest/);
+  assert.match(html, /Timing Schema Gate/);
+  assert.match(html, /Render \/ Preview QA/);
+  assert.match(html, /Section map/);
+  assert.match(html, /Timing QA/);
+  assert.match(html, /data\/timing\/section_map\.json/);
+  assert.match(html, /qa\/timing\/timing_qa_report\.json/);
+  assert.match(html, /missing/);
   assert.doesNotMatch(html, /<video controls/);
 });
+
+test("standalone HyperFrames page renders runtime controls, iframe, artifacts, and errors", async () => {
+  const tempRoot = await mkdtemp(path.join(tmpdir(), "qivance-web-hyperframes-page-"));
+  const sourceAudio = path.join(tempRoot, "raw.mp3");
+  await writeFile(sourceAudio, Buffer.from("fake-audio-for-ui"));
+  const imported = await importAcceptedMusicProject({
+    storageRoot: path.join(tempRoot, "projects"),
+    topic: "磁场为什么能保护地球",
+    targetDuration: 60,
+    lyricsMarkdown: "[Verse]\n磁场挡住高能粒子",
+    rawAudioPath: sourceAudio,
+  });
+  await writeJson(path.join(imported.projectPath, "logs", "hyperframes_ui.json"), {
+    project_id: imported.projectId,
+    status: "running",
+    pid: process.pid,
+    port: 3999,
+    host: "0.0.0.0",
+    url: "http://192.168.1.25:3999/#project/hypeframes",
+    started_at: "2026-05-29T00:00:00.000Z",
+  });
+  await writeFileAt(imported.projectPath, "hypeframes/src/index.html", "<!doctype html>");
+  await writeJson(path.join(imported.projectPath, "qa", "hypeframes", "hypeframes_file_qa_report.json"), {
+    status: "rule_pass",
+  });
+
+  const summary = await loadProjectSummary(imported.projectPath);
+  const html = renderHyperframesPage(summary, { error: "Missing HypeFrames project file." });
+
+  assert.ok(html.includes("Missing HypeFrames project file."));
+  assert.ok(html.includes(`href="/projects/${imported.projectId}"`));
+  assert.ok(html.includes("hyperframes-ui/start"));
+  assert.ok(html.includes("Status: <code>running</code>"));
+  assert.ok(html.includes('<iframe src="http://192.168.1.25:3999/#project/hypeframes"'));
+  assert.ok(html.includes("HypeFrames Project"));
+  assert.ok(html.includes("hypeframes/src/index.html"));
+  assert.ok(html.includes("HypeFrames File QA"));
+
+  const stoppedHtml = renderHyperframesPage({
+    ...summary,
+    hyperframesUi: { ...summary.hyperframesUi, status: "stopped" },
+  });
+  assert.doesNotMatch(stoppedHtml, /<iframe\b/);
+  assert.match(stoppedHtml, /HyperFrames UI is not running/);
+});
+
 
 async function writeJson(filePath: string, value: unknown): Promise<void> {
   await mkdir(path.dirname(filePath), { recursive: true });
   await writeFile(filePath, JSON.stringify(value), "utf8");
+}
+
+async function writeFileAt(projectPath: string, relativePath: string, value: string): Promise<void> {
+  const filePath = path.join(projectPath, relativePath);
+  await mkdir(path.dirname(filePath), { recursive: true });
+  await writeFile(filePath, value, "utf8");
 }

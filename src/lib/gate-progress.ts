@@ -1,5 +1,6 @@
 import { readFile } from "node:fs/promises";
 import path from "node:path";
+import { loadArtifactCatalog } from "./artifact-catalog.ts";
 
 export type GateProgressStatus = "pending" | "running" | "pass" | "warning" | "fail";
 
@@ -9,6 +10,10 @@ export type GateProgressStep = {
   status: GateProgressStatus;
   issues: string[];
   warnings: string[];
+  completed: boolean;
+  qaPath: string | null;
+  artifactCount: number;
+  availableArtifactCount: number;
 };
 
 type QaReport = {
@@ -56,29 +61,63 @@ const gateSteps = [
   },
 ] as const;
 
+type GateProgressStepId = (typeof gateSteps)[number]["id"];
+
+const artifactGroupByStepId: Record<GateProgressStepId, string> = {
+  music_ingest: "music_ingest",
+  beat_lock: "beat_lock",
+  timing_schema: "timing_schema",
+  storyboard_gate: "storyboard_gate",
+  hypeframes_project: "hypeframes_project",
+  hyperframes_ui: "render_preview",
+};
+
 export async function loadGateProgress(projectPath: string): Promise<GateProgressStep[]> {
   const workflowState = await currentWorkflowState(projectPath);
+  const artifactGroups = await loadArtifactCatalog(projectPath, { includeHashes: false });
+
   return Promise.all(
     gateSteps.map(async (step) => {
+      const artifactGroup = artifactGroups.find((group) => group.id === artifactGroupByStepId[step.id]);
+      const artifactCount = artifactGroup?.artifacts.length ?? 0;
+      const availableArtifactCount = artifactGroup?.artifacts.filter((artifact) => artifact.exists).length ?? 0;
       const report = await readOptionalJson<QaReport>(path.join(projectPath, step.qaPath));
+
       if (report) {
+        const status = statusFromReport(report);
         return {
           id: step.id,
           label: step.label,
-          status: statusFromReport(report),
+          status,
           issues: stringArray(report.blocking_issues),
           warnings: stringArray(report.warnings),
+          completed: completedFromReportStatus(report.status),
+          qaPath: step.qaPath,
+          artifactCount,
+          availableArtifactCount,
         };
       }
+
       return {
         id: step.id,
         label: step.label,
         status: step.runningStates.includes(workflowState) ? "running" : "pending",
         issues: [],
         warnings: [],
+        completed: false,
+        qaPath: step.qaPath,
+        artifactCount,
+        availableArtifactCount,
       };
     }),
   );
+}
+
+function completedFromReportStatus(status: string | undefined): boolean {
+  return status === "rule_pass" ||
+    status === "rule_pass_with_warnings" ||
+    status === "human_approved" ||
+    status === "running";
 }
 
 function statusFromReport(report: QaReport): GateProgressStatus {

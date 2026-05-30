@@ -10,6 +10,12 @@ test("gate progress maps project QA reports into visible stages", async () => {
   await writeJson(path.join(projectPath, "project_manifest.json"), {
     current_workflow_state: "timing_failed",
   });
+  await writeJson(path.join(projectPath, "audio", "music_manifest.json"), {
+    duration_sec: 4,
+  });
+  await writeJson(path.join(projectPath, "data", "timing", "beats.locked.json"), {
+    beats: [0, 1],
+  });
   await writeJson(path.join(projectPath, "qa", "music", "music_ingest_qa_report.json"), {
     status: "rule_pass",
   });
@@ -27,7 +33,6 @@ test("gate progress maps project QA reports into visible stages", async () => {
   });
 
   const progress = await loadGateProgress(projectPath);
-
   assert.deepEqual(progress.map((step) => step.id), [
     "music_ingest",
     "beat_lock",
@@ -36,10 +41,28 @@ test("gate progress maps project QA reports into visible stages", async () => {
     "hypeframes_project",
     "hyperframes_ui",
   ]);
-  assert.equal(progress.find((step) => step.id === "music_ingest")?.status, "pass");
-  assert.equal(progress.find((step) => step.id === "beat_lock")?.status, "warning");
-  assert.equal(progress.find((step) => step.id === "timing_schema")?.status, "fail");
-  assert.deepEqual(progress.find((step) => step.id === "timing_schema")?.issues, ["Section map overlaps."]);
+  const musicStep = progress.find((step) => step.id === "music_ingest");
+  const beatStep = progress.find((step) => step.id === "beat_lock");
+  const timingStep = progress.find((step) => step.id === "timing_schema");
+
+  assert.equal(musicStep?.status, "pass");
+  assert.equal(musicStep?.qaPath, "qa/music/music_ingest_qa_report.json");
+  assert.equal(musicStep?.completed, true);
+  assert.ok((musicStep?.artifactCount ?? 0) >= 5);
+  assert.equal(musicStep?.availableArtifactCount, 2);
+
+  assert.equal(beatStep?.status, "warning");
+  assert.equal(beatStep?.qaPath, "qa/timing/beat_lock_qa_report.json");
+  assert.equal(beatStep?.completed, false);
+  assert.ok((beatStep?.artifactCount ?? 0) >= 4);
+  assert.equal(beatStep?.availableArtifactCount, 2);
+
+  assert.equal(timingStep?.status, "fail");
+  assert.equal(timingStep?.qaPath, "qa/timing/timing_qa_report.json");
+  assert.equal(timingStep?.completed, false);
+  assert.ok((timingStep?.artifactCount ?? 0) >= 3);
+  assert.equal(timingStep?.availableArtifactCount, 1);
+  assert.deepEqual(timingStep?.issues, ["Section map overlaps."]);
   assert.equal(progress.find((step) => step.id === "hyperframes_ui")?.status, "pass");
 });
 

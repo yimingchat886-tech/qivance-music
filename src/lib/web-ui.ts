@@ -1,5 +1,6 @@
 import { readdir, readFile, stat } from "node:fs/promises";
 import path from "node:path";
+import { loadArtifactCatalog, type ArtifactGroup, type ArtifactItem } from "./artifact-catalog.ts";
 import { loadGateProgress, type GateProgressStep } from "./gate-progress.ts";
 import { buildHyperframesStudioUrl, loadHyperframesUiStatus, type HyperframesUiStatus } from "./hyperframes-ui.ts";
 import { defaultMainComposition, videoSizes } from "./render-settings.ts";
@@ -19,6 +20,7 @@ export type ProjectSummary = {
   hasPreview: boolean;
   gateProgress: GateProgressStep[];
   hyperframesUi: HyperframesUiStatus;
+  artifactGroups: ArtifactGroup[];
   availableDownloads: Array<{ label: string; relativePath: string }>;
 };
 
@@ -39,21 +41,12 @@ export async function listProjectSummaries(storageRoot: string): Promise<Project
 export async function loadProjectSummary(projectPath: string, requestHost?: string): Promise<ProjectSummary> {
   const manifest = await readJson<Record<string, unknown>>(path.join(projectPath, "project_manifest.json"));
   const projectId = String(manifest.project_id);
-  const downloads = [
-    ["Final", "dist/final/hypeframes_final.mp4"],
-    ["Preview", "dist/preview/preview_composite.mp4"],
-    ["Review", "dist/review/preview_composite_review.mp4"],
-    ["Master audio", "audio/master/minimax_rap_master.wav"],
-    ["Lyrics", "data/lyrics/lyrics.md"],
-    ["Render manifest", "dist/render_manifest.json"],
-    ["Master QA", "qa/master_qa_report.json"],
-  ] as const;
-  const availableDownloads = [];
-  for (const [label, relativePath] of downloads) {
-    if (await exists(path.join(projectPath, relativePath))) {
-      availableDownloads.push({ label, relativePath });
-    }
-  }
+  const artifactGroups = await loadArtifactCatalog(projectPath, { includeHashes: false });
+  const availableDownloads = artifactGroups.flatMap((group) =>
+    group.artifacts
+      .filter((artifact) => artifact.exists)
+      .map((artifact) => ({ label: `${group.label}: ${artifact.label}`, relativePath: artifact.relativePath })),
+  );
 
   const hyperframesUi = await loadHyperframesUiStatus(projectPath);
   return {
@@ -71,6 +64,7 @@ export async function loadProjectSummary(projectPath: string, requestHost?: stri
     hasPreview: await exists(path.join(projectPath, "dist", "preview", "preview_composite.mp4")),
     gateProgress: await loadGateProgress(projectPath),
     hyperframesUi: rewriteHyperframesUrl(hyperframesUi, requestHost),
+    artifactGroups,
     availableDownloads,
   };
 }
@@ -116,13 +110,7 @@ export function renderImportPage(error?: string): string {
 }
 
 export function renderProjectWorkspace(project: ProjectSummary, options: { error?: string } = {}): string {
-  const downloads = project.availableDownloads.length === 0
-    ? "<li>No downloads yet.</li>"
-    : project.availableDownloads
-        .map(
-          (asset) => `<li><a href="/projects/${encodeURIComponent(project.projectId)}/download?path=${encodeURIComponent(asset.relativePath)}">${escapeHtml(asset.label)}</a> <code>${escapeHtml(asset.relativePath)}</code></li>`,
-        )
-        .join("\n");
+  const artifactGroups = renderArtifactGroups(project, project.artifactGroups);
   const action = project.workflowState === "music_accepted"
     ? `<form method="post" action="/projects/${encodeURIComponent(project.projectId)}/run-preview"><button type="submit">运行到分镜审批</button></form>`
     : project.workflowState === "music_locking" || project.workflowState === "music_locked"
@@ -165,7 +153,49 @@ export function renderProjectWorkspace(project: ProjectSummary, options: { error
   </article>
   <article>
     <h2>QA / Export</h2>
-    <ul>${downloads}</ul>
+    ${artifactGroups}
+  </article>
+</section>`);
+}
+
+export function renderHyperframesPage(project: ProjectSummary, options: { error?: string } = {}): string {
+  const projectId = encodeURIComponent(project.projectId);
+  const url = project.hyperframesUi.url;
+  const hypeframesGroups = project.artifactGroups.filter((group) => group.id === "hypeframes_project");
+  const hypeframesGroup = hypeframesGroups[0];
+  const directUrl = url
+    ? `<p>Direct URL: <a href="${escapeHtml(url)}">${escapeHtml(url)}</a></p>`
+    : "";
+  const iframe = project.hyperframesUi.status === "running" && url
+    ? `<iframe src="${escapeHtml(url)}" title="HyperFrames UI"></iframe>`
+    : `<p class="muted">HyperFrames UI is not running.</p>`;
+  const qaSummary = hypeframesGroup
+    ? `<article>
+    <h2>HypeFrames File QA</h2>
+    <p>Status: <code>${escapeHtml(hypeframesGroup.status)}</code></p>
+  </article>`
+    : "";
+
+  return layout(`HyperFrames · ${project.topic}`, `${options.error ? `<p class="error">${escapeHtml(options.error)}</p>` : ""}
+<p><a href="/projects/${projectId}">Back to project workbench</a></p>
+<section class="grid">
+  <article>
+    <h2>Runtime</h2>
+    <p>Workflow: <code>${escapeHtml(project.workflowState)}</code></p>
+    <p>Status: <code>${escapeHtml(project.hyperframesUi.status)}</code></p>
+    ${directUrl}
+    <form method="post" action="/projects/${projectId}/hyperframes-ui/start"><button type="submit">启动 / 重启 HyperFrames UI</button></form>
+  </article>
+  ${qaSummary}
+</section>
+<section class="stack">
+  <article>
+    <h2>HyperFrames UI</h2>
+    ${iframe}
+  </article>
+  <article>
+    <h2>HypeFrames Project</h2>
+    ${renderArtifactGroups(project, hypeframesGroups)}
   </article>
 </section>`);
 }
@@ -190,7 +220,7 @@ function layout(title: string, body: string): string {
     .grid{display:grid;grid-template-columns:1fr 1fr;gap:16px}.stack{display:grid;gap:16px;max-width:820px}article{background:var(--panel);border:1px solid var(--border);border-radius:8px;padding:18px}
     label{display:grid;gap:8px;color:var(--muted)}input,textarea,select{width:100%;border:1px solid var(--border);border-radius:6px;background:#010409;color:var(--text);padding:10px;font:13px/1.45 ui-monospace,SFMono-Regular,Menlo,monospace}
     dl{display:grid;grid-template-columns:160px 1fr;gap:8px 12px}dt{color:var(--muted)}dd{margin:0;min-width:0;overflow-wrap:anywhere}.error{color:#ff7b72}.success{color:#7ee787}
-    .progress{margin-bottom:16px;background:var(--panel);border:1px solid var(--border);border-radius:8px;padding:18px}.progress ol{display:grid;grid-template-columns:repeat(6,1fr);gap:8px;list-style:none;margin:0;padding:0}.progress li{border:1px solid var(--border);border-radius:6px;padding:10px;min-width:0}.status-pass{border-color:#238636!important}.status-warning{border-color:#d29922!important}.status-fail{border-color:#da3633!important}.status-running{border-color:var(--accent)!important}.status-pending{color:var(--muted)}iframe{width:100%;min-height:520px;border:1px solid var(--border);border-radius:6px;background:#010409}
+    .progress{margin-bottom:16px;background:var(--panel);border:1px solid var(--border);border-radius:8px;padding:18px}.progress ol{display:grid;grid-template-columns:repeat(6,1fr);gap:8px;list-style:none;margin:0;padding:0}.progress li{border:1px solid var(--border);border-radius:6px;padding:10px;min-width:0}.status-pass{border-color:#238636!important}.status-warning{border-color:#d29922!important}.status-fail{border-color:#da3633!important}.status-running{border-color:var(--accent)!important}.status-pending{color:var(--muted)}.artifact-group{border:1px solid var(--border);border-radius:6px;padding:12px;margin-top:12px}.artifact-group ul{margin:10px 0 0;padding-left:18px}.muted{color:var(--muted)}iframe{width:100%;min-height:520px;border:1px solid var(--border);border-radius:6px;background:#010409}
     @media(max-width:800px){header,main{padding:16px}.grid{grid-template-columns:1fr}dl{grid-template-columns:1fr}}
   </style>
 </head>
@@ -206,11 +236,48 @@ function renderGateProgress(progress: GateProgressStep[]): string {
     .map((step) => `<li class="status-${step.status}">
   <strong>${escapeHtml(step.label)}</strong><br>
   <code>${escapeHtml(step.status)}</code>
+  <p class="muted">Artifacts: ${step.availableArtifactCount} / ${step.artifactCount}</p>
+  ${step.qaPath ? `<p class="muted">QA: <code>${escapeHtml(step.qaPath)}</code></p>` : ""}
   ${step.issues.length > 0 ? `<p class="error">${escapeHtml(step.issues.join(" "))}</p>` : ""}
   ${step.warnings.length > 0 ? `<p>${escapeHtml(step.warnings.join(" "))}</p>` : ""}
 </li>`)
     .join("\n");
   return `<section class="progress"><h2>Gate Progress</h2><ol>${steps}</ol></section>`;
+}
+
+function renderArtifactGroups(project: ProjectSummary, groups: ArtifactGroup[]): string {
+  if (groups.length === 0) {
+    return `<p class="muted">No artifact groups yet.</p>`;
+  }
+  return groups
+    .map((group) => {
+      const availableCount = group.artifacts.filter((artifact) => artifact.exists).length;
+      const qaLink = group.qaPath
+        ? `<p class="muted">QA: ${artifactPath(project, group.qaPath, group.artifacts.some((artifact) => artifact.relativePath === group.qaPath && artifact.exists))}</p>`
+        : "";
+      const artifacts = group.artifacts.map((artifact) => renderArtifactItem(project, artifact)).join("\n");
+      return `<section class="artifact-group">
+  <h3>${escapeHtml(group.label)}</h3>
+  <p>${escapeHtml(group.description)}</p>
+  <p class="muted">Status: <code>${escapeHtml(group.status)}</code> · Artifacts: ${availableCount} / ${group.artifacts.length}</p>
+  ${qaLink}
+  <ul>${artifacts}</ul>
+</section>`;
+    })
+    .join("\n");
+}
+
+function renderArtifactItem(project: ProjectSummary, artifact: ArtifactItem): string {
+  const status = artifact.exists ? "" : ` <span class="muted">missing</span>`;
+  return `<li>${escapeHtml(artifact.label)} ${artifactPath(project, artifact.relativePath, artifact.exists)}${status}</li>`;
+}
+
+function artifactPath(project: ProjectSummary, relativePath: string, exists: boolean): string {
+  const pathLabel = `<code>${escapeHtml(relativePath)}</code>`;
+  if (!exists) {
+    return pathLabel;
+  }
+  return `<a href="/projects/${encodeURIComponent(project.projectId)}/download?path=${encodeURIComponent(relativePath)}">${pathLabel}</a>`;
 }
 
 function renderStoryboardImport(project: ProjectSummary): string {
@@ -221,13 +288,14 @@ function renderStoryboardImport(project: ProjectSummary): string {
 }
 
 function renderHyperframesUi(project: ProjectSummary): string {
-  const startForm = `<form method="post" action="/projects/${encodeURIComponent(project.projectId)}/hyperframes-ui/start"><button type="submit">启动 HyperFrames UI</button></form>`;
-  if (project.hyperframesUi.status === "not_started") {
-    return `${startForm}<p>HyperFrames UI not started yet.</p>`;
-  }
-  const url = project.hyperframesUi.url;
-  const status = `<p>Status: <code>${escapeHtml(project.hyperframesUi.status)}</code> · <a href="${escapeHtml(url)}">${escapeHtml(url)}</a></p>`;
-  return `${startForm}${status}${project.hyperframesUi.status === "running" ? `<iframe src="${escapeHtml(url)}" title="HyperFrames UI"></iframe>` : ""}`;
+  const projectId = encodeURIComponent(project.projectId);
+  const startForm = `<form method="post" action="/projects/${projectId}/hyperframes-ui/start"><button type="submit">启动 HyperFrames UI</button></form>`;
+  const status = `<p>Runtime status: <code>${escapeHtml(project.hyperframesUi.status)}</code></p>`;
+  const directUrl = project.hyperframesUi.status === "not_started"
+    ? ""
+    : `<p>Direct URL: <a href="${escapeHtml(project.hyperframesUi.url)}">${escapeHtml(project.hyperframesUi.url)}</a></p>`;
+  const subpageLink = `<p><a class="button" href="/projects/${projectId}/hyperframes">打开 HyperFrames 子页面</a></p>`;
+  return `${startForm}${status}${directUrl}${subpageLink}`;
 }
 
 function rewriteHyperframesUrl(status: HyperframesUiStatus, requestHost?: string): HyperframesUiStatus {
