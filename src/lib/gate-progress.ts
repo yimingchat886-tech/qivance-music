@@ -54,6 +54,24 @@ const gateSteps = [
     runningStates: ["hypeframes_generating", "hypeframes_project_ready", "hypeframes_file_qa_checking"],
   },
   {
+    id: "hyperframes_skills",
+    label: "HyperFrames Skills",
+    qaPath: "qa/hypeframes/hyperframes_skills_qa_report.json",
+    runningStates: ["hypeframes_generating", "hypeframes_file_qa_checking"],
+  },
+  {
+    id: "wsl_codex_agent",
+    label: "WSL Codex Agent",
+    qaPath: "qa/hypeframes/wsl_codex_agent_qa_report.json",
+    runningStates: ["hypeframes_generating", "hypeframes_file_qa_checking"],
+  },
+  {
+    id: "codex_forbidden_path",
+    label: "Codex Forbidden Path Gate",
+    qaPath: "qa/hypeframes/codex_forbidden_path_qa_report.json",
+    runningStates: ["hypeframes_file_qa_checking"],
+  },
+  {
     id: "hyperframes_ui",
     label: "HyperFrames UI",
     qaPath: "logs/hyperframes_ui.json",
@@ -69,6 +87,9 @@ const artifactGroupByStepId: Record<GateProgressStepId, string> = {
   timing_schema: "timing_schema",
   storyboard_gate: "storyboard_gate",
   hypeframes_project: "hypeframes_project",
+  hyperframes_skills: "hypeframes_project",
+  wsl_codex_agent: "wsl_codex_agent",
+  codex_forbidden_path: "wsl_codex_agent",
   hyperframes_ui: "render_preview",
 };
 
@@ -117,13 +138,14 @@ function completedFromReportStatus(status: string | undefined): boolean {
   return status === "rule_pass" ||
     status === "rule_pass_with_warnings" ||
     status === "human_approved" ||
-    status === "running";
+    status === "skipped";
 }
 
 function statusFromReport(report: QaReport): GateProgressStatus {
   if (report.status === "rule_fail_blocked") return "fail";
   if (report.status === "rule_pass_with_warnings" || report.status === "human_pending") return "warning";
-  if (report.status === "rule_pass" || report.status === "human_approved" || report.status === "running") return "pass";
+  if (report.status === "rule_pass" || report.status === "human_approved" || report.status === "skipped") return "pass";
+  if (report.status === "running") return "running";
   if (report.status === "stopped") return "warning";
   return "pending";
 }

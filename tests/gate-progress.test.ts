@@ -39,6 +39,9 @@ test("gate progress maps project QA reports into visible stages", async () => {
     "timing_schema",
     "storyboard_gate",
     "hypeframes_project",
+    "hyperframes_skills",
+    "wsl_codex_agent",
+    "codex_forbidden_path",
     "hyperframes_ui",
   ]);
   const musicStep = progress.find((step) => step.id === "music_ingest");
@@ -63,7 +66,9 @@ test("gate progress maps project QA reports into visible stages", async () => {
   assert.ok((timingStep?.artifactCount ?? 0) >= 3);
   assert.equal(timingStep?.availableArtifactCount, 1);
   assert.deepEqual(timingStep?.issues, ["Section map overlaps."]);
-  assert.equal(progress.find((step) => step.id === "hyperframes_ui")?.status, "pass");
+  const uiStep = progress.find((step) => step.id === "hyperframes_ui");
+  assert.equal(uiStep?.status, "running");
+  assert.equal(uiStep?.completed, false);
 });
 
 async function writeJson(filePath: string, value: unknown): Promise<void> {
