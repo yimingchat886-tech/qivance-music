@@ -1,5 +1,5 @@
 import { createReadStream } from "node:fs";
-import { mkdir } from "node:fs/promises";
+import { mkdir, stat } from "node:fs/promises";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { networkInterfaces } from "node:os";
 import path from "node:path";
@@ -23,6 +23,7 @@ import { formatStartupMessage } from "./lib/server-urls.ts";
 import {
   listProjectSummaries,
   loadProjectSummary,
+  renderHyperframesPage,
   renderImportPage,
   renderNotFound,
   renderProjectWorkspace,
@@ -139,10 +140,10 @@ async function route(request: IncomingMessage, response: ServerResponse): Promis
         projectId,
         requestHost: request.headers.host,
       });
-      redirect(response, `/projects/${encodeURIComponent(projectId)}`);
+      redirect(response, `/projects/${encodeURIComponent(projectId)}/hyperframes`);
     } catch (error) {
       response.writeHead(400, { "content-type": "text/html; charset=utf-8" });
-      response.end(renderProjectWorkspace(await loadProjectSummary(projectPath, request.headers.host), {
+      response.end(renderHyperframesPage(await loadProjectSummary(projectPath, request.headers.host), {
         error: error instanceof Error ? error.message : String(error),
       }));
     }
@@ -153,6 +154,13 @@ async function route(request: IncomingMessage, response: ServerResponse): Promis
   if (request.method === "GET" && hyperframesUiStatusMatch) {
     const projectId = decodeURIComponent(hyperframesUiStatusMatch[1]);
     sendJson(response, await loadHyperframesUiStatus(projectPathForId(projectId)));
+    return;
+  }
+
+  const hyperframesPageMatch = url.pathname.match(/^\/projects\/([^/]+)\/hyperframes$/);
+  if (request.method === "GET" && hyperframesPageMatch) {
+    const projectId = decodeURIComponent(hyperframesPageMatch[1]);
+    sendHtml(response, renderHyperframesPage(await loadProjectSummary(projectPathForId(projectId), request.headers.host)));
     return;
   }
 
@@ -188,12 +196,38 @@ async function sendDownload(response: ServerResponse, projectPath: string, relat
     response.end("Invalid download path.");
     return;
   }
-  const absolutePath = path.join(projectPath, relativePath);
+  const resolvedProjectPath = path.resolve(projectPath);
+  const absolutePath = path.resolve(resolvedProjectPath, relativePath);
+  if (absolutePath !== resolvedProjectPath && !absolutePath.startsWith(resolvedProjectPath + path.sep)) {
+    response.writeHead(400, { "content-type": "text/plain; charset=utf-8" });
+    response.end("Invalid download path.");
+    return;
+  }
+  try {
+    const fileStat = await stat(absolutePath);
+    if (!fileStat.isFile()) {
+      response.writeHead(404, { "content-type": "text/plain; charset=utf-8" });
+      response.end("Download not found.");
+      return;
+    }
+  } catch {
+    response.writeHead(404, { "content-type": "text/plain; charset=utf-8" });
+    response.end("Download not found.");
+    return;
+  }
+
   response.writeHead(200, {
     "content-type": contentType(relativePath),
     "content-disposition": `attachment; filename="${path.basename(relativePath)}"`,
   });
-  createReadStream(absolutePath).pipe(response);
+  const stream = createReadStream(absolutePath);
+  stream.on("error", () => {
+    if (!response.headersSent) {
+      response.writeHead(500, { "content-type": "text/plain; charset=utf-8" });
+    }
+    response.end("Download failed.");
+  });
+  stream.pipe(response);
 }
 
 function sendHtml(response: ServerResponse, html: string): void {
