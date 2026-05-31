@@ -181,6 +181,10 @@ test("standalone HyperFrames page renders runtime controls, iframe, artifacts, a
   assert.ok(html.includes("Status: <code>running</code>"));
   assert.ok(html.includes('<iframe src="http://192.168.1.25:3999/#project/hypeframes"'));
   assert.ok(html.includes("HypeFrames Project"));
+  assert.ok(html.includes("WSL Codex CLI"));
+  assert.ok(html.includes("HyperFrames Skills"));
+  assert.ok(html.includes("Codex Run Logs"));
+  assert.ok(html.includes("Gate Status"));
   assert.ok(html.includes("hypeframes/src/index.html"));
   assert.ok(html.includes("HypeFrames File QA"));
 

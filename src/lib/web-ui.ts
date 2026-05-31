@@ -161,20 +161,21 @@ export function renderProjectWorkspace(project: ProjectSummary, options: { error
 export function renderHyperframesPage(project: ProjectSummary, options: { error?: string } = {}): string {
   const projectId = encodeURIComponent(project.projectId);
   const url = project.hyperframesUi.url;
-  const hypeframesGroups = project.artifactGroups.filter((group) => group.id === "hypeframes_project");
-  const hypeframesGroup = hypeframesGroups[0];
+  const hypeframesGroup = project.artifactGroups.find((group) => group.id === "hypeframes_project");
+  const codexGroup = project.artifactGroups.find((group) => group.id === "wsl_codex_agent");
+  const renderGroup = project.artifactGroups.find((group) => group.id === "render_preview");
+  const pageGroups = [hypeframesGroup, codexGroup].filter((group): group is ArtifactGroup => Boolean(group));
   const directUrl = url
     ? `<p>Direct URL: <a href="${escapeHtml(url)}">${escapeHtml(url)}</a></p>`
     : "";
   const iframe = project.hyperframesUi.status === "running" && url
     ? `<iframe src="${escapeHtml(url)}" title="HyperFrames UI"></iframe>`
     : `<p class="muted">HyperFrames UI is not running.</p>`;
-  const qaSummary = hypeframesGroup
-    ? `<article>
-    <h2>HypeFrames File QA</h2>
-    <p>Status: <code>${escapeHtml(hypeframesGroup.status)}</code></p>
-  </article>`
-    : "";
+  const codexArtifacts = codexGroup?.artifacts ?? [];
+  const hypeframesArtifacts = hypeframesGroup?.artifacts ?? [];
+  const linkList = (artifacts: ArtifactItem[]) => artifacts
+    .map((artifact) => `<li>${escapeHtml(artifact.label)} ${artifactPath(project, artifact.relativePath, artifact.exists)}${artifact.exists ? "" : ' <span class="muted">missing</span>'}</li>`)
+    .join("\n");
 
   return layout(`HyperFrames · ${project.topic}`, `${options.error ? `<p class="error">${escapeHtml(options.error)}</p>` : ""}
 <p><a href="/projects/${projectId}">Back to project workbench</a></p>
@@ -186,7 +187,26 @@ export function renderHyperframesPage(project: ProjectSummary, options: { error?
     ${directUrl}
     <form method="post" action="/projects/${projectId}/hyperframes-ui/start"><button type="submit">启动 / 重启 HyperFrames UI</button></form>
   </article>
-  ${qaSummary}
+  <article>
+    <h2>WSL Codex CLI</h2>
+    <p>Status: <code>${escapeHtml(codexGroup?.status ?? "pending")}</code></p>
+    <ul>${linkList(codexArtifacts.filter((artifact) => /detection|availability/i.test(artifact.label)))}</ul>
+  </article>
+  <article>
+    <h2>HyperFrames Skills</h2>
+    <p>Status: <code>${escapeHtml(hypeframesGroup?.status ?? "pending")}</code></p>
+    <ul>${linkList(hypeframesArtifacts.filter((artifact) => /skill/i.test(artifact.label)))}</ul>
+  </article>
+  <article>
+    <h2>Codex Run Logs</h2>
+    <ul>${linkList(codexArtifacts.filter((artifact) => /Latest Codex|changed files|diffstat/i.test(artifact.label)))}</ul>
+  </article>
+  <article>
+    <h2>Gate Status</h2>
+    <p>Codex forbidden path gate: <code>${escapeHtml(codexGroup?.status ?? "pending")}</code></p>
+    <p>HypeFrames File QA: <code>${escapeHtml(hypeframesGroup?.status ?? "pending")}</code></p>
+    <p>Render QA: <code>${escapeHtml(renderGroup?.status ?? "pending")}</code></p>
+  </article>
 </section>
 <section class="stack">
   <article>
@@ -194,8 +214,8 @@ export function renderHyperframesPage(project: ProjectSummary, options: { error?
     ${iframe}
   </article>
   <article>
-    <h2>HypeFrames Project</h2>
-    ${renderArtifactGroups(project, hypeframesGroups)}
+    <h2>HypeFrames / Codex Artifacts</h2>
+    ${renderArtifactGroups(project, pageGroups)}
   </article>
 </section>`);
 }

@@ -117,7 +117,30 @@ const groupDefinitions: ArtifactGroupDefinition[] = [
       { label: "Render targets", relativePath: "hypeframes/render_targets/render_targets.json" },
       { label: "HypeFrames manifest", relativePath: "hypeframes/hypeframes_project_manifest.json" },
       { label: "HypeFrames file QA", relativePath: "qa/hypeframes/hypeframes_file_qa_report.json" },
+      { label: "HyperFrames skills QA", relativePath: "qa/hypeframes/hyperframes_skills_qa_report.json", required: false },
+      { label: "HyperFrames composition skill", relativePath: "hypeframes/.agents/skills/hyperframes-composition/SKILL.md", required: false },
+      { label: "HyperFrames render CLI skill", relativePath: "hypeframes/.agents/skills/hyperframes-render-cli/SKILL.md", required: false },
+      { label: "HyperFrames gate repair skill", relativePath: "hypeframes/.agents/skills/hyperframes-gate-repair/SKILL.md", required: false },
       { label: "HypeFrames revision notes", relativePath: "qa/hypeframes/hypeframes_revision_notes.md", required: false },
+    ],
+  },
+  {
+    id: "wsl_codex_agent",
+    label: "WSL Codex Agent",
+    description: "WSL Codex CLI detection, execution logs, JSONL events, final summary, and diff metadata.",
+    qaPath: "qa/hypeframes/wsl_codex_agent_qa_report.json",
+    artifacts: [
+      { label: "WSL Codex detection", relativePath: "logs/codex/wsl_codex_detection.json", required: false },
+      { label: "WSL Codex availability QA", relativePath: "qa/hypeframes/wsl_codex_availability_qa_report.json", required: false },
+      { label: "Latest Codex prompt", relativePath: "logs/codex/latest.prompt.md", required: false },
+      { label: "Latest Codex stdout JSONL", relativePath: "logs/codex/latest.stdout.jsonl", required: false },
+      { label: "Latest Codex stderr", relativePath: "logs/codex/latest.stderr.log", required: false },
+      { label: "Latest Codex final", relativePath: "logs/codex/latest.final.md", required: false },
+      { label: "Latest Codex summary", relativePath: "logs/codex/latest.summary.json", required: false },
+      { label: "Latest Codex diffstat", relativePath: "logs/codex/latest.diffstat.txt", required: false },
+      { label: "Latest Codex changed files", relativePath: "logs/codex/latest.changed_files.json", required: false },
+      { label: "Codex forbidden path QA", relativePath: "qa/hypeframes/codex_forbidden_path_qa_report.json", required: false },
+      { label: "WSL Codex agent QA", relativePath: "qa/hypeframes/wsl_codex_agent_qa_report.json", required: false },
     ],
   },
   {
@@ -272,6 +295,7 @@ function contentType(relativePath: string): string {
   if (relativePath.endsWith(".json")) return "application/json; charset=utf-8";
   if (relativePath.endsWith(".md")) return "text/markdown; charset=utf-8";
   if (relativePath.endsWith(".jpg") || relativePath.endsWith(".jpeg")) return "image/jpeg";
+  if (relativePath.endsWith(".log") || relativePath.endsWith(".txt") || relativePath.endsWith(".jsonl")) return "text/plain; charset=utf-8";
   if (relativePath.endsWith(".html")) return "text/html; charset=utf-8";
   if (relativePath.endsWith(".css")) return "text/css; charset=utf-8";
   if (relativePath.endsWith(".js")) return "text/javascript; charset=utf-8";

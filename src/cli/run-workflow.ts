@@ -1,14 +1,12 @@
 import path from "node:path";
 import {
   approvePreview,
-  approveScenePlan,
   generateBeatLock,
-  generateHypeframesProject,
   generateScenePlans,
   generateSectionMap,
   lockAcceptedMusic,
-  renderPreview,
 } from "../lib/post-minimax-workflow.ts";
+import { runApprovedSceneToPreview } from "../lib/video-preview-workflow.ts";
 
 const projectPath = process.argv[2] ? path.resolve(process.argv[2]) : "";
 if (!projectPath) {
@@ -20,8 +18,6 @@ await lockAcceptedMusic(projectPath);
 await generateBeatLock(projectPath);
 await generateSectionMap(projectPath);
 await generateScenePlans(projectPath);
-await approveScenePlan(projectPath, "cli");
-await generateHypeframesProject(projectPath);
-await renderPreview(projectPath);
+await runApprovedSceneToPreview(projectPath, "cli");
 await approvePreview(projectPath, "cli");
 console.log(`Post-MiniMax workflow complete: ${projectPath}`);

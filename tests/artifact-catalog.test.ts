@@ -20,6 +20,7 @@ test("artifact catalog returns the phase 1 workflow groups", async () => {
     "timing_schema",
     "storyboard_gate",
     "hypeframes_project",
+    "wsl_codex_agent",
     "render_preview",
   ]);
   assert.equal(groups.find((group) => group.id === "beat_lock")?.label, "Beat Lock");
@@ -126,7 +127,7 @@ test("artifact catalog writes an artifact manifest snapshot", async () => {
   const snapshot = JSON.parse(await readFile(path.join(projectPath, "artifact_manifest.json"), "utf8"));
   assert.equal(snapshot.project_id, "project_catalog_snapshot");
   assert.equal(typeof snapshot.updated_at, "string");
-  assert.equal(snapshot.groups.length, 6);
+  assert.equal(snapshot.groups.length, 7);
   assert.equal(snapshot.groups[0].id, "music_ingest");
 });
 
@@ -137,7 +138,7 @@ test("artifact catalog snapshot falls back to project directory name without a m
 
   const snapshot = JSON.parse(await readFile(path.join(projectPath, "artifact_manifest.json"), "utf8"));
   assert.equal(snapshot.project_id, path.basename(projectPath));
-  assert.equal(snapshot.groups.length, 6);
+  assert.equal(snapshot.groups.length, 7);
 });
 
 async function writeFileAt(projectPath: string, relativePath: string, value: string): Promise<void> {

@@ -4,18 +4,16 @@ import { homedir } from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
 import { ensureDir, sha256File, writeJson } from "./fs-utils.ts";
+import { writeQaReport, type QaStatus } from "./gate-report.ts";
+import { runHypeframesFileGate } from "./hypeframes-file-gate.ts";
 import { parseLyrics, type StructuredLyrics } from "./lyrics.ts";
 import { resolveMainComposition, resolveVideoSize, type VideoSize } from "./render-settings.ts";
+import { runSceneRuleGate } from "./scene-rule-gate.ts";
+import { appendStepRun as appendStepRunLog } from "./step-run-log.ts";
+import { runTimingSchemaGate } from "./timing-schema-gate.ts";
 import type { WorkflowState } from "./workflow.ts";
 
 const execFileAsync = promisify(execFile);
-
-type QaStatus =
-  | "rule_pass"
-  | "rule_pass_with_warnings"
-  | "rule_fail_blocked"
-  | "human_pending"
-  | "human_approved";
 
 type MusicManifest = {
   audio_version: string;
@@ -234,16 +232,9 @@ export async function generateSectionMap(projectPath: string): Promise<SectionMa
     duration_sec: manifest.duration_sec,
     sections,
   };
-  const hasInvalidSection = sections.some((section, index) =>
-    section.end_sec > manifest.duration_sec + 0.25 ||
-    section.end_sec <= section.start_sec ||
-    (index > 0 && section.start_sec < sections[index - 1].end_sec),
-  );
-  const status: QaStatus = hasInvalidSection ? "rule_fail_blocked" : "rule_pass";
-
   await writeJson(path.join(projectPath, "data", "timing", "section_map.json"), sectionMap);
   await writeJson(path.join(projectPath, "data", "timing", "section_density_report.json"), {
-    status,
+    status: "generated",
     sections: sections.map((section) => ({
       section_id: section.section_id,
       label: section.label,
@@ -252,24 +243,13 @@ export async function generateSectionMap(projectPath: string): Promise<SectionMa
       density: round(section.lyric_lines.length / Math.max(0.1, section.end_sec - section.start_sec)),
     })),
   });
-  await writeQaReport(projectPath, "qa/timing/timing_qa_report.json", {
-    gate_name: "Timing Schema Gate",
-    status,
-    blocking_issues: hasInvalidSection ? ["Section map contains overlap, zero duration, or out-of-range timing."] : [],
-    input_artifacts: [
-      "audio/music_manifest.json",
-      "data/timing/beats.locked.json",
-      "data/lyrics/lyrics_structured.json",
-    ],
-    output_artifacts: [
-      "data/timing/section_map.json",
-      "data/timing/section_density_report.json",
-    ],
-  });
-  await setWorkflowState(projectPath, status === "rule_pass" ? "timing_passed" : "timing_failed", [
-    status === "rule_pass" ? "run_post_music_workflow" : "rerun_section_mapping",
+  await runTimingSchemaGate(projectPath);
+  const timingReport = await readJson<{ status: QaStatus }>(path.join(projectPath, "qa", "timing", "timing_qa_report.json"));
+  const timingPassed = timingReport.status !== "rule_fail_blocked";
+  await setWorkflowState(projectPath, timingPassed ? "timing_passed" : "timing_failed", [
+    timingPassed ? "run_post_music_workflow" : "rerun_section_mapping",
   ]);
-  await appendStepRun(projectPath, "section_mapping", status === "rule_pass" ? "succeeded" : "failed_blocked");
+  await appendStepRun(projectPath, "section_mapping", timingPassed ? "succeeded" : "failed_blocked");
 
   return sectionMap;
 }
@@ -314,16 +294,13 @@ export async function generateScenePlans(projectPath: string): Promise<void> {
     resolution: [previewWidth, previewHeight],
     targets: ["preview_composite", "preview_composite_review"],
   });
-  await writeQaReport(projectPath, "qa/storyboard/scene_rule_check.json", {
-    gate_name: "Scene Rule Check",
-    status: "human_pending",
-    input_artifacts: ["data/timing/section_map.json"],
-    output_artifacts: [
-      "data/storyboard/scene_plan.json",
-      "data/storyboard/caption_plan.json",
-      "data/storyboard/visual_plan.json",
-    ],
-  });
+  await runSceneRuleGate(projectPath);
+  const sceneReport = await readJson<{ status: QaStatus }>(path.join(projectPath, "qa", "storyboard", "scene_rule_check.json"));
+  if (sceneReport.status === "rule_fail_blocked") {
+    await setWorkflowState(projectPath, "failed", ["rerun_storyboard_generation"]);
+    await appendStepRun(projectPath, "storyboard_generation", "failed_blocked");
+    return;
+  }
   await setWorkflowState(projectPath, "scene_waiting_human", ["approve_scene"]);
   await appendStepRun(projectPath, "storyboard_generation", "waiting_human");
 }
@@ -351,6 +328,7 @@ export async function generateHypeframesProject(projectPath: string): Promise<vo
   const sectionMap = await readJson<SectionMap>(path.join(projectPath, "data", "timing", "section_map.json"));
   const scenePlan = await readJson<Record<string, unknown>>(path.join(projectPath, "data", "storyboard", "scene_plan.json"));
   const captionPlan = await readJson<Record<string, unknown>>(path.join(projectPath, "data", "storyboard", "caption_plan.json"));
+  const visualPlan = await readJson<Record<string, unknown>>(path.join(projectPath, "data", "storyboard", "visual_plan.json"));
   const renderSettings = await readRenderSettings(projectPath);
   const audioOutput = path.join(projectPath, "hypeframes", "public_assets", "audio", "minimax_rap_master.wav");
   await ensureDir(path.dirname(audioOutput));
@@ -391,6 +369,7 @@ export async function generateHypeframesProject(projectPath: string): Promise<vo
   await writeJson(path.join(projectPath, "hypeframes", "generated", "timeline.json"), sectionMap);
   await writeJson(path.join(projectPath, "hypeframes", "generated", "scene_plan.json"), scenePlan);
   await writeJson(path.join(projectPath, "hypeframes", "generated", "caption_plan.json"), captionPlan);
+  await writeJson(path.join(projectPath, "hypeframes", "generated", "visual_plan.json"), visualPlan);
   await writeJson(path.join(projectPath, "hypeframes", "render_targets", "render_targets.json"), targets);
   await writeJson(path.join(projectPath, "data", "storyboard", "render_plan.json"), {
     fps: renderSettings.fps,
@@ -407,28 +386,27 @@ export async function generateHypeframesProject(projectPath: string): Promise<vo
     resolution: [renderSettings.width, renderSettings.height],
     render_targets: Object.keys(targets),
   });
-  await writeQaReport(projectPath, "qa/hypeframes/hypeframes_file_qa_report.json", {
-    gate_name: "HypeFrames File QA",
-    status: "rule_pass",
-    input_artifacts: [
-      "data/storyboard/scene_plan.json",
-      "data/storyboard/caption_plan.json",
-      "data/storyboard/visual_plan.json",
-    ],
-    output_artifacts: [
-      "hypeframes/src/index.html",
-      "hypeframes/src/styles.css",
-      "hypeframes/src/main.js",
-      "hypeframes/src/config.json",
-      "hypeframes/render_targets/render_targets.json",
-      "hypeframes/hypeframes_project_manifest.json",
-    ],
-  });
-  await setWorkflowState(projectPath, "hypeframes_file_qa_passed", ["render_preview"]);
-  await appendStepRun(projectPath, "hypeframes_generation", "succeeded");
+  await runHypeframesFileGate(projectPath);
+  const hypeframesReport = await readJson<{ status: QaStatus }>(
+    path.join(projectPath, "qa", "hypeframes", "hypeframes_file_qa_report.json"),
+  );
+  const hypeframesPassed = hypeframesReport.status !== "rule_fail_blocked";
+  await setWorkflowState(projectPath, hypeframesPassed ? "hypeframes_file_qa_passed" : "hypeframes_file_qa_failed", [
+    hypeframesPassed ? "render_preview" : "repair_hypeframes_project",
+  ]);
+  await appendStepRun(projectPath, "hypeframes_generation", hypeframesPassed ? "succeeded" : "failed_blocked");
 }
 
 export async function renderPreview(projectPath: string): Promise<void> {
+  await runHypeframesFileGate(projectPath);
+  const hypeframesReport = await readJson<{ status: QaStatus }>(
+    path.join(projectPath, "qa", "hypeframes", "hypeframes_file_qa_report.json"),
+  );
+  if (hypeframesReport.status === "rule_fail_blocked") {
+    await setWorkflowState(projectPath, "hypeframes_file_qa_failed", ["repair_hypeframes_project"]);
+    await appendStepRun(projectPath, "preview_render", "failed_blocked");
+    throw new Error("HypeFrames File QA is blocking; preview render is not allowed.");
+  }
   await setWorkflowState(projectPath, "preview_rendering", []);
   const manifest = await readJson<MusicManifest>(path.join(projectPath, "audio", "music_manifest.json"));
   const previewPath = path.join(projectPath, "dist", "preview", "preview_composite.mp4");
@@ -845,42 +823,11 @@ function nearestTime(preferred: number, times: number[]): number {
   return times.reduce((best, time) => Math.abs(time - preferred) < Math.abs(best - preferred) ? time : best);
 }
 
-async function writeQaReport(
-  projectPath: string,
-  relativePath: string,
-  input: {
-    gate_name: string;
-    status: QaStatus;
-    blocking_issues?: string[];
-    warnings?: string[];
-    input_artifacts: string[];
-    output_artifacts: string[];
-  },
-): Promise<void> {
-  await writeJson(path.join(projectPath, relativePath), {
-    gate_name: input.gate_name,
-    status: input.status,
-    blocking_issues: input.blocking_issues ?? [],
-    warnings: input.warnings ?? [],
-    auto_fixes_applied: [],
-    input_artifacts: input.input_artifacts,
-    output_artifacts: input.output_artifacts,
-    reviewer_type: input.status.startsWith("human") ? "human" : "rule",
-    created_at: new Date().toISOString(),
-  });
-}
-
 async function appendStepRun(projectPath: string, stepType: string, status: string): Promise<void> {
-  await ensureDir(path.join(projectPath, "logs"));
-  await writeFile(
-    path.join(projectPath, "logs", "step_runs.jsonl"),
-    `${JSON.stringify({
-      step_type: stepType,
-      status,
-      created_at: new Date().toISOString(),
-    })}\n`,
-    { flag: "a" },
-  );
+  await appendStepRunLog(projectPath, {
+    step_type: stepType,
+    status,
+  });
 }
 
 async function appendLog(filePath: string, line: string): Promise<void> {
