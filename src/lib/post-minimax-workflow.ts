@@ -5,7 +5,9 @@ import path from "node:path";
 import { promisify } from "node:util";
 import { ensureDir, sha256File, writeJson } from "./fs-utils.ts";
 import { writeQaReport, type QaStatus } from "./gate-report.ts";
+import { writeHypeframesAgentContext } from "./hypeframes-agent-context.ts";
 import { runHypeframesFileGate } from "./hypeframes-file-gate.ts";
+import { runHypeframesMusicVideoContractGate } from "./hypeframes-music-video-contract-gate.ts";
 import { parseLyrics, type StructuredLyrics } from "./lyrics.ts";
 import { resolveMainComposition, resolveVideoSize, type VideoSize } from "./render-settings.ts";
 import { runSceneRuleGate } from "./scene-rule-gate.ts";
@@ -370,6 +372,7 @@ export async function generateHypeframesProject(projectPath: string): Promise<vo
   await writeJson(path.join(projectPath, "hypeframes", "generated", "scene_plan.json"), scenePlan);
   await writeJson(path.join(projectPath, "hypeframes", "generated", "caption_plan.json"), captionPlan);
   await writeJson(path.join(projectPath, "hypeframes", "generated", "visual_plan.json"), visualPlan);
+  await writeHypeframesAgentContext(projectPath);
   await writeJson(path.join(projectPath, "hypeframes", "render_targets", "render_targets.json"), targets);
   await writeJson(path.join(projectPath, "data", "storyboard", "render_plan.json"), {
     fps: renderSettings.fps,
@@ -387,10 +390,14 @@ export async function generateHypeframesProject(projectPath: string): Promise<vo
     render_targets: Object.keys(targets),
   });
   await runHypeframesFileGate(projectPath);
+  await runHypeframesMusicVideoContractGate(projectPath);
   const hypeframesReport = await readJson<{ status: QaStatus }>(
     path.join(projectPath, "qa", "hypeframes", "hypeframes_file_qa_report.json"),
   );
-  const hypeframesPassed = hypeframesReport.status !== "rule_fail_blocked";
+  const contractReport = await readJson<{ status: QaStatus }>(
+    path.join(projectPath, "qa", "hypeframes", "hypeframes_music_video_contract_qa_report.json"),
+  );
+  const hypeframesPassed = hypeframesReport.status !== "rule_fail_blocked" && contractReport.status !== "rule_fail_blocked";
   await setWorkflowState(projectPath, hypeframesPassed ? "hypeframes_file_qa_passed" : "hypeframes_file_qa_failed", [
     hypeframesPassed ? "render_preview" : "repair_hypeframes_project",
   ]);
@@ -399,6 +406,15 @@ export async function generateHypeframesProject(projectPath: string): Promise<vo
 
 export async function renderPreview(projectPath: string): Promise<void> {
   await runHypeframesFileGate(projectPath);
+  await runHypeframesMusicVideoContractGate(projectPath);
+  const contractReport = await readJson<{ status: QaStatus }>(
+    path.join(projectPath, "qa", "hypeframes", "hypeframes_music_video_contract_qa_report.json"),
+  );
+  if (contractReport.status === "rule_fail_blocked") {
+    await setWorkflowState(projectPath, "hypeframes_file_qa_failed", ["repair_hypeframes_project"]);
+    await appendStepRun(projectPath, "preview_render", "failed_blocked");
+    throw new Error("HypeFrames Music Video Contract QA is blocking; preview render is not allowed.");
+  }
   const hypeframesReport = await readJson<{ status: QaStatus }>(
     path.join(projectPath, "qa", "hypeframes", "hypeframes_file_qa_report.json"),
   );
@@ -419,11 +435,19 @@ export async function renderPreview(projectPath: string): Promise<void> {
   await ensureDir(path.dirname(reviewPath));
   await ensureDir(path.dirname(renderLogPath));
   const hyperframesResult = await tryRenderWithHyperframes(projectPath, previewPath);
+  let renderer = hyperframesResult.ok ? "hyperframes_cli" : "ffmpeg_fallback";
   if (!hyperframesResult.ok || !(await exists(previewPath))) {
     await appendLog(renderLogPath, `HyperFrames fallback: ${hyperframesResult.message}`);
     await renderMp4(audioPath, previewPath, manifest.duration_sec, renderSettings, false);
   } else {
     await appendLog(renderLogPath, `HyperFrames render succeeded: ${hyperframesResult.message}`);
+    const hyperframesProbe = await probeMedia(previewPath);
+    const hyperframesHasAudio = hyperframesProbe.streams.some((stream) => stream.codec_type === "audio");
+    if (!hyperframesHasAudio) {
+      await appendLog(renderLogPath, "HyperFrames output has no audio; muxing locked master audio.");
+      await muxLockedAudio(projectPath, previewPath, audioPath);
+      renderer = "hyperframes_cli_plus_audio_mux";
+    }
   }
   await renderMp4(audioPath, reviewPath, manifest.duration_sec, renderSettings, true);
 
@@ -454,7 +478,8 @@ export async function renderPreview(projectPath: string): Promise<void> {
   const renderManifest = {
     render_id: `render_${Date.now()}`,
     render_targets: ["preview_composite", "preview_composite_review"],
-    renderer: hyperframesResult.ok ? "hyperframes_cli" : "ffmpeg_fallback",
+    renderer,
+    audio_source: manifest.master_path,
     audio_hash: manifest.sha256,
     video_duration_sec: round(previewProbe.duration),
     audio_duration_sec: manifest.duration_sec,
@@ -569,6 +594,32 @@ async function findHyperframesExecutable(): Promise<{ executable: string; prefix
     // Fall through to npx, which may still work if network/cache is available.
   }
   return { executable: "npx", prefixArgs: ["hyperframes"], label: "npx hyperframes" };
+}
+
+async function muxLockedAudio(projectPath: string, previewPath: string, audioPath: string): Promise<void> {
+  const visualOnlyPath = path.join(projectPath, ".tmp", "hyperframes_visual_only.mp4");
+  await ensureDir(path.dirname(visualOnlyPath));
+  await copyFile(previewPath, visualOnlyPath);
+  await execFileAsync("ffmpeg", [
+    "-hide_banner",
+    "-loglevel",
+    "error",
+    "-y",
+    "-i",
+    visualOnlyPath,
+    "-i",
+    audioPath,
+    "-map",
+    "0:v:0",
+    "-map",
+    "1:a:0",
+    "-shortest",
+    "-c:v",
+    "copy",
+    "-c:a",
+    "aac",
+    previewPath,
+  ]);
 }
 
 async function renderMp4(

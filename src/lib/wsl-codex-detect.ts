@@ -165,7 +165,11 @@ export async function detectWslCodexCli(input: {
       };
 
   await writeJson(path.join(input.projectPath, "logs", "codex", "wsl_codex_detection.json"), detection);
-  await writeAvailabilityQa(input.projectPath, detection, env.QIVANCE_HYPEFRAMES_AGENT ?? "wsl_codex_optional");
+  await writeAvailabilityQa(
+    input.projectPath,
+    detection,
+    env.QIVANCE_HYPEFRAMES_AGENT_MODE ?? env.QIVANCE_HYPEFRAMES_AGENT ?? "required_author",
+  );
   return detection;
 }
 
@@ -235,12 +239,12 @@ async function writeAvailabilityQa(
     return;
   }
 
-  const required = mode === "wsl_codex_required";
+  const required = isRequiredAgentMode(mode);
   await writeQaReport(projectPath, "qa/hypeframes/wsl_codex_availability_qa_report.json", {
     gate_name: "WSL Codex CLI Availability",
     status: required ? "rule_fail_blocked" : "rule_pass_with_warnings",
     blocking_issues: required
-      ? ["QIVANCE_HYPEFRAMES_AGENT=wsl_codex_required but WSL Codex CLI is not available."]
+      ? [`QIVANCE_HYPEFRAMES_AGENT_MODE=${mode} requires WSL Codex CLI but it is not available.`]
       : [],
     warnings: required ? [] : ["WSL Codex CLI is not available; deterministic HypeFrames generator will be used."],
     input_artifacts: [],
@@ -256,4 +260,8 @@ function isWindowsCodexShim(codexPath: string): boolean {
     normalized.endsWith(".cmd") ||
     normalized.endsWith(".ps1") ||
     normalized.includes("powershell");
+}
+
+function isRequiredAgentMode(mode: string): boolean {
+  return mode === "required_author" || mode === "gate_repair" || mode === "wsl_codex_required";
 }
