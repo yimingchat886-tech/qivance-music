@@ -1,4 +1,5 @@
 import { writeArtifactSnapshot } from "./artifact-catalog.ts";
+import { resolveHypeframesAgentMode } from "./hypeframes-agent-mode.ts";
 import { runHypeframesCodexAgent } from "./hypeframes-codex-agent.ts";
 import { runHypeframesFileGate } from "./hypeframes-file-gate.ts";
 import { approveScenePlan, generateHypeframesProject, renderPreview } from "./post-minimax-workflow.ts";
@@ -18,5 +19,5 @@ export async function runApprovedSceneToPreview(projectPath: string, reviewer = 
 }
 
 export function shouldRunWslCodexAgent(env: NodeJS.ProcessEnv = process.env): boolean {
-  return (env.QIVANCE_HYPEFRAMES_AGENT ?? "wsl_codex_optional") !== "off";
+  return resolveHypeframesAgentMode(env) !== "off";
 }
