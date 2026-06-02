@@ -5,6 +5,10 @@ import { loadGateProgress, type GateProgressStep } from "./gate-progress.ts";
 import { buildHyperframesStudioUrl, loadHyperframesUiStatus, type HyperframesUiStatus } from "./hyperframes-ui.ts";
 import { defaultMainComposition, videoSizes } from "./render-settings.ts";
 
+export type StoryboardImportSummary =
+  | { status: "pending" }
+  | { status: "imported"; sceneCount: number; captionCount: number; visualCount: number };
+
 export type ProjectSummary = {
   projectId: string;
   projectPath: string;
@@ -20,6 +24,7 @@ export type ProjectSummary = {
   hasPreview: boolean;
   gateProgress: GateProgressStep[];
   hyperframesUi: HyperframesUiStatus;
+  storyboardImport: StoryboardImportSummary;
   artifactGroups: ArtifactGroup[];
   availableDownloads: Array<{ label: string; relativePath: string }>;
 };
@@ -48,12 +53,13 @@ export async function loadProjectSummary(projectPath: string, requestHost?: stri
       .map((artifact) => ({ label: `${group.label}: ${artifact.label}`, relativePath: artifact.relativePath })),
   );
 
+  const workflowState = String(manifest.current_workflow_state ?? "unknown");
   const hyperframesUi = await loadHyperframesUiStatus(projectPath);
   return {
     projectId,
     projectPath,
     topic: String(manifest.topic ?? projectId),
-    workflowState: String(manifest.current_workflow_state ?? "unknown"),
+    workflowState,
     targetDuration: numberOrNull(manifest.target_duration),
     actualAudioDuration: numberOrNull(manifest.actual_audio_duration),
     aspectRatio: String(manifest.aspect_ratio ?? "9:16"),
@@ -64,6 +70,7 @@ export async function loadProjectSummary(projectPath: string, requestHost?: stri
     hasPreview: await exists(path.join(projectPath, "dist", "preview", "preview_composite.mp4")),
     gateProgress: await loadGateProgress(projectPath),
     hyperframesUi: rewriteHyperframesUrl(hyperframesUi, requestHost),
+    storyboardImport: await loadStoryboardImportSummary(projectPath, workflowState),
     artifactGroups,
     availableDownloads,
   };
@@ -122,7 +129,7 @@ export function renderProjectWorkspace(project: ProjectSummary, options: { error
       ? `<form method="post" action="/projects/${encodeURIComponent(project.projectId)}/approve-preview"><button type="submit">OK，Preview 通过并登记成品</button></form>`
     : project.workflowState === "hypeframes_video_ready"
       ? `<p class="success">Preview workflow complete. Assets are ready to download.</p>`
-      : `<p>Current status does not expose a manual action in this first MVP.</p>`;
+      : `<p class="muted">当前状态下没有可执行的手动操作，请等待系统完成当前任务。</p>`;
 
   return layout(project.topic, `${options.error ? `<p class="error">${escapeHtml(options.error)}</p>` : ""}${renderGateProgress(project.gateProgress)}
 <section class="grid">
@@ -131,6 +138,7 @@ export function renderProjectWorkspace(project: ProjectSummary, options: { error
     <dl>
       <dt>ID</dt><dd><code>${escapeHtml(project.projectId)}</code></dd>
       <dt>Status</dt><dd><code>${escapeHtml(project.workflowState)}</code></dd>
+      <dt>Execution</dt><dd>${escapeHtml(workflowStatusLabel(project.workflowState))}</dd>
       <dt>Aspect</dt><dd>${escapeHtml(project.aspectRatio)}</dd>
       <dt>Composition</dt><dd><code>${escapeHtml(project.mainComposition)}</code></dd>
       <dt>Video size</dt><dd>${escapeHtml(project.videoSize)}</dd>
@@ -184,7 +192,8 @@ export function renderHyperframesPage(project: ProjectSummary, options: { error?
   <article>
     <h2>Runtime</h2>
     <p>Workflow: <code>${escapeHtml(project.workflowState)}</code></p>
-    <p>Status: <code>${escapeHtml(project.hyperframesUi.status)}</code></p>
+    <p>Status: <code>${escapeHtml(project.hyperframesUi.status)}</code> · ${escapeHtml(hyperframesUiStatusLabel(project.hyperframesUi.status))}</p>
+    ${renderHyperframesRuntimeIssue(project.hyperframesUi)}
     ${directUrl}
     <form method="post" action="/projects/${projectId}/hyperframes-ui/start"><button type="submit">启动 / 重启 HyperFrames UI</button></form>
   </article>
@@ -302,6 +311,14 @@ function artifactPath(project: ProjectSummary, relativePath: string, exists: boo
 }
 
 function renderStoryboardImport(project: ProjectSummary): string {
+  if (project.storyboardImport.status === "imported") {
+    return `<section class="artifact-group">
+  <p class="success">分镜脚本已导入。</p>
+  <p class="muted">场景 ${project.storyboardImport.sceneCount} · 字幕 ${project.storyboardImport.captionCount} · 视觉 ${project.storyboardImport.visualCount}</p>
+  <p>下一步：点击“开始制作 HyperFrames 视频”。</p>
+</section>`;
+  }
+
   return `<form method="post" action="/projects/${encodeURIComponent(project.projectId)}/storyboard/import" class="stack">
   <label>Storyboard JSON<textarea name="storyboardJson" rows="10" placeholder='{"scenes":[],"captions":[],"visuals":[]}' required></textarea></label>
   <button type="submit">导入外部 LLM 分镜脚本</button>
@@ -311,12 +328,67 @@ function renderStoryboardImport(project: ProjectSummary): string {
 function renderHyperframesUi(project: ProjectSummary): string {
   const projectId = encodeURIComponent(project.projectId);
   const startForm = `<form method="post" action="/projects/${projectId}/hyperframes-ui/start"><button type="submit">启动 HyperFrames UI</button></form>`;
-  const status = `<p>Runtime status: <code>${escapeHtml(project.hyperframesUi.status)}</code></p>`;
+  const status = `<p>Runtime status: <code>${escapeHtml(project.hyperframesUi.status)}</code> · ${escapeHtml(hyperframesUiStatusLabel(project.hyperframesUi.status))}</p>`;
+  const issue = renderHyperframesRuntimeIssue(project.hyperframesUi);
   const directUrl = project.hyperframesUi.status === "not_started"
     ? ""
     : `<p>Direct URL: <a href="${escapeHtml(project.hyperframesUi.url)}">${escapeHtml(project.hyperframesUi.url)}</a></p>`;
   const subpageLink = `<p><a class="button" href="/projects/${projectId}/hyperframes">打开 HyperFrames 子页面</a></p>`;
-  return `${startForm}${status}${directUrl}${subpageLink}`;
+  return `${startForm}${status}${issue}${directUrl}${subpageLink}`;
+}
+
+async function loadStoryboardImportSummary(projectPath: string, workflowState: string): Promise<StoryboardImportSummary> {
+  if (workflowState !== "scene_waiting_human") {
+    return { status: "pending" };
+  }
+  const sceneCount = await storyboardArrayCount(projectPath, "data/storyboard/scene_plan.json", "scenes");
+  if (sceneCount === null) {
+    return { status: "pending" };
+  }
+  return {
+    status: "imported",
+    sceneCount,
+    captionCount: await storyboardArrayCount(projectPath, "data/storyboard/caption_plan.json", "captions") ?? 0,
+    visualCount: await storyboardArrayCount(projectPath, "data/storyboard/visual_plan.json", "visuals") ?? 0,
+  };
+}
+
+async function storyboardArrayCount(projectPath: string, relativePath: string, key: string): Promise<number | null> {
+  const value = await readOptionalJson<Record<string, unknown>>(path.join(projectPath, relativePath));
+  const items = value?.[key];
+  return Array.isArray(items) ? items.length : null;
+}
+
+function hyperframesUiStatusLabel(status: HyperframesUiStatus["status"]): string {
+  switch (status) {
+    case "not_started": return "等待启动";
+    case "starting": return "正在启动 HyperFrames";
+    case "retrying": return "HyperFrames 启动失败，正在重试";
+    case "running": return "HyperFrames 已启动";
+    case "stopped": return "已中断或已停止";
+    case "failed": return "执行失败";
+  }
+}
+
+function renderHyperframesRuntimeIssue(status: HyperframesUiStatus): string {
+  if (status.status === "failed" && status.last_error) {
+    return `<p class="error">${escapeHtml(status.last_error)}</p>`;
+  }
+  if (status.status === "retrying" && status.last_error) {
+    return `<p class="muted">上次启动失败：${escapeHtml(status.last_error)}</p>`;
+  }
+  return "";
+}
+
+function workflowStatusLabel(state: string): string {
+  if (state === "hypeframes_video_ready") return "渲染完成";
+  if (state === "failed" || state.endsWith("_failed")) return "执行失败";
+  if (state === "preview_rendering" || state === "render_file_qa_checking") return "正在渲染";
+  if (state === "hypeframes_generating" || state === "hypeframes_project_ready" || state === "hypeframes_file_qa_checking") return "正在执行生成任务";
+  if (state === "scene_waiting_human") return "等待人工分镜审批";
+  if (state === "preview_waiting_human") return "等待人工审片";
+  if (state === "music_accepted" || state === "timing_passed") return "等待启动";
+  return "正在处理或等待系统继续";
 }
 
 function rewriteHyperframesUrl(status: HyperframesUiStatus, requestHost?: string): HyperframesUiStatus {
@@ -331,6 +403,14 @@ function rewriteHyperframesUrl(status: HyperframesUiStatus, requestHost?: string
 
 async function readJson<T>(filePath: string): Promise<T> {
   return JSON.parse(await readFile(filePath, "utf8")) as T;
+}
+
+async function readOptionalJson<T>(filePath: string): Promise<T | null> {
+  try {
+    return JSON.parse(await readFile(filePath, "utf8")) as T;
+  } catch {
+    return null;
+  }
 }
 
 async function exists(filePath: string): Promise<boolean> {

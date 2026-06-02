@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
 import { importAcceptedMusicProject } from "../src/lib/import-project.ts";
+import { importStoryboardFromJson } from "../src/lib/storyboard-import.ts";
 import { loadProjectSummary, renderHyperframesPage, renderImportPage, renderProjectWorkspace, renderProjectsPage } from "../src/lib/web-ui.ts";
 
 test("import UI uploads audio and exposes HypeFrames render settings without raw JSON config", () => {
@@ -227,3 +228,69 @@ async function writeFileAt(projectPath: string, relativePath: string, value: str
   await mkdir(path.dirname(filePath), { recursive: true });
   await writeFile(filePath, value, "utf8");
 }
+
+test("workspace UI explains states without manual actions instead of exposing MVP copy", async () => {
+  const tempRoot = await mkdtemp(path.join(tmpdir(), "qivance-web-no-action-"));
+  const sourceAudio = path.join(tempRoot, "raw.mp3");
+  await writeFile(sourceAudio, Buffer.from("fake-audio-for-no-action-ui"));
+  const imported = await importAcceptedMusicProject({
+    storageRoot: path.join(tempRoot, "projects"),
+    topic: "状态提示测试",
+    targetDuration: 60,
+    lyricsMarkdown: "[Verse]\n状态要清楚",
+    rawAudioPath: sourceAudio,
+  });
+  await writeJson(path.join(imported.projectPath, "project_manifest.json"), {
+    project_id: imported.projectId,
+    topic: "状态提示测试",
+    target_duration: 60,
+    aspect_ratio: "9:16",
+    current_workflow_state: "preview_rendering",
+    actual_audio_duration: null,
+    locked_audio_hash: null,
+    preview_video_hash: null,
+  });
+
+  const html = renderProjectWorkspace(await loadProjectSummary(imported.projectPath));
+
+  assert.doesNotMatch(html, /Current status does not expose a manual action in this first MVP/);
+  assert.match(html, /当前状态下没有可执行的手动操作，请等待系统完成当前任务。/);
+});
+
+test("workspace UI marks imported storyboard as complete and shows the next step", async () => {
+  const tempRoot = await mkdtemp(path.join(tmpdir(), "qivance-web-storyboard-imported-"));
+  const sourceAudio = path.join(tempRoot, "raw.mp3");
+  await writeFile(sourceAudio, Buffer.from("fake-audio-for-storyboard-imported-ui"));
+  const imported = await importAcceptedMusicProject({
+    storageRoot: path.join(tempRoot, "projects"),
+    topic: "分镜导入状态测试",
+    targetDuration: 60,
+    lyricsMarkdown: "[Verse]\n分镜完成后要可见",
+    rawAudioPath: sourceAudio,
+  });
+
+  await importStoryboardFromJson({
+    projectPath: imported.projectPath,
+    storyboardJson: JSON.stringify({
+      scenes: [
+        { scene_id: "scene_001", section_id: "sec_001", start_sec: 0, end_sec: 3 },
+      ],
+      captions: [
+        { scene_id: "scene_001", start_sec: 0, end_sec: 2, text: "分镜已导入" },
+      ],
+      visuals: [
+        { scene_id: "scene_001", type: "concept_card" },
+      ],
+    }),
+  });
+
+  const html = renderProjectWorkspace(await loadProjectSummary(imported.projectPath));
+
+  assert.match(html, /分镜脚本已导入/);
+  assert.match(html, /场景 1/);
+  assert.match(html, /字幕 1/);
+  assert.match(html, /视觉 1/);
+  assert.match(html, /开始制作 HyperFrames 视频/);
+  assert.doesNotMatch(html, /name="storyboardJson"/);
+  assert.doesNotMatch(html, /<textarea/);
+});
