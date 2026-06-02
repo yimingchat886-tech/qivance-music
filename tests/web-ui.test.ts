@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
 import { importAcceptedMusicProject } from "../src/lib/import-project.ts";
-import { loadProjectSummary, renderHyperframesPage, renderImportPage, renderProjectWorkspace } from "../src/lib/web-ui.ts";
+import { loadProjectSummary, renderHyperframesPage, renderImportPage, renderProjectWorkspace, renderProjectsPage } from "../src/lib/web-ui.ts";
 
 test("import UI uploads audio and exposes HypeFrames render settings without raw JSON config", () => {
   const html = renderImportPage();
@@ -43,6 +43,25 @@ test("workspace UI exposes only post-MiniMax preview actions for the first MVP",
   assert.doesNotMatch(html, /积分扣费/);
 });
 
+test("projects UI exposes a delete action for each imported project", async () => {
+  const tempRoot = await mkdtemp(path.join(tmpdir(), "qivance-web-delete-"));
+  const sourceAudio = path.join(tempRoot, "raw.mp3");
+  await writeFile(sourceAudio, Buffer.from("fake-audio-for-delete-ui"));
+  const imported = await importAcceptedMusicProject({
+    storageRoot: path.join(tempRoot, "projects"),
+    topic: "可以删除的项目",
+    targetDuration: 60,
+    lyricsMarkdown: "[Verse]\n删除测试",
+    rawAudioPath: sourceAudio,
+  });
+
+  const summary = await loadProjectSummary(imported.projectPath);
+  const html = renderProjectsPage([summary]);
+
+  assert.match(html, new RegExp(`/projects/${imported.projectId}/delete`));
+  assert.match(html, /删除/);
+});
+
 test("workspace UI exposes button-style OK approvals", async () => {
   const tempRoot = await mkdtemp(path.join(tmpdir(), "qivance-web-"));
   const sourceAudio = path.join(tempRoot, "raw.mp3");
@@ -71,7 +90,8 @@ test("workspace UI exposes button-style OK approvals", async () => {
   );
   let summary = await loadProjectSummary(imported.projectPath);
   let html = renderProjectWorkspace(summary);
-  assert.match(html, /OK，分镜通过并渲染 Preview/);
+  assert.match(html, /开始制作 HyperFrames 视频/);
+  assert.doesNotMatch(html, /OK，分镜通过并渲染 Preview/);
   assert.match(html, /approve-scene/);
 
   await writeFile(

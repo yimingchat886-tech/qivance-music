@@ -1,3 +1,4 @@
+import { rm } from "node:fs/promises";
 import { importStoryboardFromJson, type StoryboardImportResult } from "./storyboard-import.ts";
 import {
   startHyperframesUi,
@@ -15,6 +16,10 @@ export async function importPastedStoryboard(
     throw new Error("Missing storyboardJson.");
   }
   return importStoryboardFromJson({ projectPath, storyboardJson });
+}
+
+export async function deleteProject(projectPath: string): Promise<void> {
+  await rm(projectPath, { recursive: true, force: true });
 }
 
 export async function startProjectHyperframesUi(input: {

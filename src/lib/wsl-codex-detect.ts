@@ -4,7 +4,7 @@ import { promisify } from "node:util";
 import { writeJson } from "./fs-utils.ts";
 import { writeQaReport } from "./gate-report.ts";
 import { toWslPath } from "./wsl-path.ts";
-import { runWslCommand, shellQuote } from "./wsl-command.ts";
+import { resolveWslExe, runWslCommand, shellQuote } from "./wsl-command.ts";
 
 const execFileAsync = promisify(execFile);
 
@@ -53,7 +53,7 @@ export async function detectWslCodexCli(input: {
   platform?: NodeJS.Platform;
 }): Promise<WslCodexDetection> {
   const env = { ...process.env, ...(input.env ?? {}) };
-  const wslExe = env.QIVANCE_WSL_EXE ?? "wsl.exe";
+  const wslExe = resolveWslExe({ env, platform: input.platform });
   const distro = env.QIVANCE_WSL_DISTRO || null;
   const user = env.QIVANCE_WSL_USER || null;
   const codexBinInput = env.QIVANCE_WSL_CODEX_BIN ?? "codex";

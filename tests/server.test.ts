@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
-import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -68,6 +68,58 @@ test("server serves HyperFrames subpage and safe downloads with a relative stora
   }
 });
 
+test("server deletes an imported project directory", async () => {
+  const tempRoot = await mkdtemp(path.join(tmpdir(), "qivance-server-delete-"));
+  const projectId = "project_delete_test";
+  const projectPath = path.join(tempRoot, "projects", projectId);
+  await mkdir(projectPath, { recursive: true });
+  await writeFile(
+    path.join(projectPath, "project_manifest.json"),
+    JSON.stringify({
+      project_id: projectId,
+      topic: "Delete route test",
+      target_duration: 60,
+      aspect_ratio: "9:16",
+      current_workflow_state: "timing_passed",
+      actual_audio_duration: null,
+      locked_audio_hash: null,
+      preview_video_hash: null,
+    }),
+    "utf8",
+  );
+
+  const port = await getFreePort();
+  const server = spawn(process.execPath, ["--experimental-strip-types", serverPath], {
+    cwd: tempRoot,
+    env: {
+      ...process.env,
+      HOST: "127.0.0.1",
+      PORT: String(port),
+      QIVANCE_PROJECTS_ROOT: "projects",
+    },
+  });
+
+  try {
+    await waitForServer(server, port);
+
+    const deleteResponse = await fetch(`http://127.0.0.1:${port}/projects/${projectId}/delete`, {
+      method: "POST",
+      redirect: "manual",
+    });
+    assert.equal(deleteResponse.status, 303);
+    assert.equal(deleteResponse.headers.get("location"), "/projects");
+    await assert.rejects(
+      stat(projectPath),
+      (error) => error instanceof Error && "code" in error && error.code === "ENOENT",
+    );
+
+    const projectsResponse = await fetch(`http://127.0.0.1:${port}/projects`);
+    assert.equal(projectsResponse.status, 200);
+    assert.doesNotMatch(await projectsResponse.text(), /Delete route test/);
+  } finally {
+    await stopServer(server);
+  }
+});
 async function getFreePort(): Promise<number> {
   const { createServer } = await import("node:net");
   return await new Promise((resolve, reject) => {

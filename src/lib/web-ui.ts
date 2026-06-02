@@ -71,7 +71,7 @@ export async function loadProjectSummary(projectPath: string, requestHost?: stri
 
 export function renderProjectsPage(projects: ProjectSummary[]): string {
   const rows = projects.length === 0
-    ? `<tr><td colspan="5">No imported projects yet.</td></tr>`
+    ? `<tr><td colspan="6">No imported projects yet.</td></tr>`
     : projects
         .map(
           (project) => `<tr>
@@ -80,13 +80,14 @@ export function renderProjectsPage(projects: ProjectSummary[]): string {
   <td>${project.hasPreview ? "Ready" : "Not yet"}</td>
   <td>${escapeHtml(project.aspectRatio)}</td>
   <td>${project.actualAudioDuration ?? "-"}</td>
+  <td><form method="post" action="/projects/${encodeURIComponent(project.projectId)}/delete"><button type="submit">删除</button></form></td>
 </tr>`,
         )
         .join("\n");
 
   return layout("Projects", `<section class="toolbar"><a class="button" href="/projects/new">导入已接受音乐项目</a></section>
 <table>
-  <thead><tr><th>Topic</th><th>Status</th><th>Preview</th><th>Aspect</th><th>Audio seconds</th></tr></thead>
+  <thead><tr><th>Topic</th><th>Status</th><th>Preview</th><th>Aspect</th><th>Audio seconds</th><th>Actions</th></tr></thead>
   <tbody>${rows}</tbody>
 </table>`);
 }
@@ -116,7 +117,7 @@ export function renderProjectWorkspace(project: ProjectSummary, options: { error
     : project.workflowState === "music_locking" || project.workflowState === "music_locked"
       ? `<form method="post" action="/projects/${encodeURIComponent(project.projectId)}/run-preview"><button type="submit">运行到分镜审批</button></form>`
     : project.workflowState === "scene_waiting_human"
-      ? `<form method="post" action="/projects/${encodeURIComponent(project.projectId)}/approve-scene"><button type="submit">OK，分镜通过并渲染 Preview</button></form>`
+      ? `<form method="post" action="/projects/${encodeURIComponent(project.projectId)}/approve-scene"><button type="submit">开始制作 HyperFrames 视频</button></form>`
     : project.workflowState === "preview_waiting_human"
       ? `<form method="post" action="/projects/${encodeURIComponent(project.projectId)}/approve-preview"><button type="submit">OK，Preview 通过并登记成品</button></form>`
     : project.workflowState === "hypeframes_video_ready"

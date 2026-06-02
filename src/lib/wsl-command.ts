@@ -1,5 +1,8 @@
 import { spawn } from "node:child_process";
+import { existsSync as nodeExistsSync } from "node:fs";
 import { scrubSecrets } from "./gate-report.ts";
+
+const WINDOWS_SYSTEM32_WSL_EXE = "/mnt/c/Windows/System32/wsl.exe";
 
 export type WslCommandInput = {
   wslExe?: string;
@@ -19,9 +22,28 @@ export type WslCommandResult = {
   commandForLog: string;
 };
 
+export type ResolveWslExeInput = {
+  env?: NodeJS.ProcessEnv;
+  platform?: NodeJS.Platform;
+  existsSync?: (candidate: string) => boolean;
+};
+
+export function resolveWslExe(input: ResolveWslExeInput = {}): string {
+  const env = { ...process.env, ...(input.env ?? {}) };
+  if (env.QIVANCE_WSL_EXE) return env.QIVANCE_WSL_EXE;
+
+  const platform = input.platform ?? process.platform;
+  const existsSync = input.existsSync ?? nodeExistsSync;
+  if (platform !== "win32" && (env.WSL_DISTRO_NAME || env.WSL_INTEROP) && existsSync(WINDOWS_SYSTEM32_WSL_EXE)) {
+    return WINDOWS_SYSTEM32_WSL_EXE;
+  }
+
+  return "wsl.exe";
+}
+
 export async function runWslCommand(input: WslCommandInput): Promise<WslCommandResult> {
   const env = { ...process.env, ...(input.env ?? {}) };
-  const wslExe = input.wslExe ?? env.QIVANCE_WSL_EXE ?? "wsl.exe";
+  const wslExe = input.wslExe ?? resolveWslExe({ env });
   const args = [
     ...(input.distro ? ["--distribution", input.distro] : []),
     ...(input.user ? ["--user", input.user] : []),
