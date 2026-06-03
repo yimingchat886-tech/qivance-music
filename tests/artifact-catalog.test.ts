@@ -20,6 +20,7 @@ test("artifact catalog returns the phase 1 workflow groups", async () => {
     "timing_schema",
     "storyboard_gate",
     "hypeframes_project",
+    "hyperframes_skills",
     "wsl_codex_agent",
     "render_preview",
   ]);
@@ -53,6 +54,7 @@ test("artifact catalog marks existing files with metadata and maps QA status", a
 
   assert.equal(beatGroup?.status, "warning");
   assert.equal(beatArtifact?.exists, true);
+  assert.equal(beatArtifact?.availability, "ready");
   assert.equal(beatArtifact?.sizeBytes, Buffer.byteLength(lockedBeats));
   assert.equal(beatArtifact?.sha256, sha256(lockedBeats));
   assert.equal(beatArtifact?.contentType, "application/json; charset=utf-8");
@@ -69,6 +71,31 @@ test("artifact catalog treats partial artifacts without QA as running", async ()
 
   assert.equal(groups.find((group) => group.id === "hypeframes_project")?.status, "running");
   assert.equal(groups.find((group) => group.id === "music_ingest")?.status, "pending");
+});
+
+test("artifact catalog keeps unfinished artifacts pending until a gate finishes", async () => {
+  const projectPath = await mkdtemp(path.join(tmpdir(), "qivance-artifacts-availability-"));
+  await writeJson(path.join(projectPath, "project_manifest.json"), {
+    project_id: "project_catalog_availability",
+  });
+  await writeFileAt(projectPath, "hypeframes/src/index.html", "<!doctype html>");
+
+  let groups = await loadArtifactCatalog(projectPath);
+  let styles = groups
+    .find((group) => group.id === "hypeframes_project")
+    ?.artifacts.find((artifact) => artifact.relativePath === "hypeframes/src/styles.css");
+
+  assert.equal(styles?.availability, "pending");
+
+  await writeJson(path.join(projectPath, "qa", "hypeframes", "hypeframes_file_qa_report.json"), {
+    status: "rule_pass",
+  });
+  groups = await loadArtifactCatalog(projectPath);
+  styles = groups
+    .find((group) => group.id === "hypeframes_project")
+    ?.artifacts.find((artifact) => artifact.relativePath === "hypeframes/src/styles.css");
+
+  assert.equal(styles?.availability, "missing");
 });
 
 test("artifact catalog expands raw audio glob artifacts", async () => {
@@ -102,6 +129,36 @@ test("artifact catalog ignores raw audio backup files without the dotted prefix"
 });
 
 
+test("artifact catalog excludes concrete HyperFrames skill files from project artifact counts", async () => {
+  const projectPath = await mkdtemp(path.join(tmpdir(), "qivance-artifacts-no-skill-files-"));
+  await writeJson(path.join(projectPath, "project_manifest.json"), {
+    project_id: "project_catalog_no_skill_files",
+  });
+  await writeFileAt(projectPath, "hypeframes/.agents/skills/hyperframes-composition/SKILL.md", "cached skill");
+  await writeJson(path.join(projectPath, "qa", "hypeframes", "hyperframes_skills_status.json"), {
+    name: "qivance-hyperframes-skills",
+    version: "1.0.0",
+    hash: "a".repeat(64),
+    source: "qivance-app:resources/hyperframes-skills/v1",
+    cache_status: "created",
+    success: true,
+  });
+
+  const groups = await loadArtifactCatalog(projectPath);
+  const hypeframes = groups.find((group) => group.id === "hypeframes_project");
+  const skills = groups.find((group) => group.id === "hyperframes_skills");
+
+  assert.equal(
+    hypeframes?.artifacts.some((artifact) => artifact.relativePath.includes(".agents/skills")),
+    false,
+  );
+  assert.equal(
+    skills?.artifacts.some((artifact) => artifact.relativePath === "qa/hypeframes/hyperframes_skills_status.json"),
+    true,
+  );
+});
+
+
 test("artifact catalog can skip hashes for lightweight progress reads", async () => {
   const projectPath = await mkdtemp(path.join(tmpdir(), "qivance-artifacts-nohash-"));
   await writeFileAt(projectPath, "data/timing/beats.locked.json", "{\"beats\":[0,1]}");
@@ -127,7 +184,7 @@ test("artifact catalog writes an artifact manifest snapshot", async () => {
   const snapshot = JSON.parse(await readFile(path.join(projectPath, "artifact_manifest.json"), "utf8"));
   assert.equal(snapshot.project_id, "project_catalog_snapshot");
   assert.equal(typeof snapshot.updated_at, "string");
-  assert.equal(snapshot.groups.length, 7);
+  assert.equal(snapshot.groups.length, 8);
   assert.equal(snapshot.groups[0].id, "music_ingest");
 });
 
@@ -138,7 +195,7 @@ test("artifact catalog snapshot falls back to project directory name without a m
 
   const snapshot = JSON.parse(await readFile(path.join(projectPath, "artifact_manifest.json"), "utf8"));
   assert.equal(snapshot.project_id, path.basename(projectPath));
-  assert.equal(snapshot.groups.length, 7);
+  assert.equal(snapshot.groups.length, 8);
 });
 
 async function writeFileAt(projectPath: string, relativePath: string, value: string): Promise<void> {

@@ -5,20 +5,32 @@ import { readFile, readdir, stat } from "node:fs/promises";
 import path from "node:path";
 import { ensureDir, writeJson } from "./fs-utils.ts";
 
-export type HyperframesUiRuntime = {
+export type HyperframesUiRuntimeStatus = "starting" | "retrying" | "running" | "stopped" | "failed";
+
+type HyperframesUiRuntimeRecord = {
   project_id: string;
-  status: "running";
-  pid: number;
+  status: HyperframesUiRuntimeStatus;
+  pid: number | null;
   port: number;
   host: string;
   url: string;
+  started_at: string | null;
+  updated_at: string;
+  attempt: number;
+  last_error: string | null;
+};
+
+export type HyperframesUiRuntime = HyperframesUiRuntimeRecord & {
+  status: "running";
+  pid: number;
   started_at: string;
 };
 
 export type HyperframesUiStatus =
   | HyperframesUiRuntime
-  | (Omit<HyperframesUiRuntime, "status"> & { status: "stopped" })
-  | { status: "not_started"; url: null };
+  | (HyperframesUiRuntimeRecord & { status: "starting" | "retrying" | "failed"; pid: null })
+  | (HyperframesUiRuntimeRecord & { status: "stopped"; pid: number; started_at: string })
+  | { status: "not_started"; url: null; attempt: 0; last_error: null; updated_at: null };
 
 export type HyperframesCommand = {
   executable: string;
@@ -44,11 +56,14 @@ export async function loadHyperframesUiStatus(
   projectPath: string,
   isProcessAlive = processAlive,
 ): Promise<HyperframesUiStatus> {
-  const runtime = await readOptionalJson<HyperframesUiRuntime>(runtimePath(projectPath));
-  if (!runtime) {
-    return { status: "not_started", url: null };
+  const runtime = normalizeRuntimeRecord(await readOptionalJson<Partial<HyperframesUiRuntimeRecord>>(runtimePath(projectPath)));
+  if (runtime === null) {
+    return { status: "not_started", url: null, attempt: 0, last_error: null, updated_at: null };
   }
-  return isProcessAlive(runtime.pid) ? runtime : { ...runtime, status: "stopped" };
+  if (runtime.status === "running") {
+    return isProcessAlive(runtime.pid) ? runtime : { ...runtime, status: "stopped" };
+  }
+  return runtime as HyperframesUiStatus;
 }
 
 export async function startHyperframesUi(input: {
@@ -68,34 +83,96 @@ export async function startHyperframesUi(input: {
   }
 
   const hyperframesPath = path.join(input.projectPath, "hypeframes");
-  if (!(await exists(path.join(hyperframesPath, "src", "index.html")))) {
+  if (await exists(path.join(hyperframesPath, "src", "index.html")) === false) {
     throw new Error("Missing HypeFrames project file hypeframes/src/index.html.");
   }
 
   const port = await (input.findFreePort ?? findFreePort)();
   const command = input.command ?? await findHyperframesCommand();
   const args = [...command.prefixArgs, "preview", "--port", String(port), "--no-open", "."];
-  const child = (input.spawnPreview ?? spawnDetached)(command.executable, args, { cwd: hyperframesPath });
-  if (!child.pid) {
-    throw new Error("HyperFrames preview process did not expose a pid.");
-  }
+  const url = buildHyperframesStudioUrl({ requestHost: input.requestHost, port, projectName: "hypeframes" });
+  const now = input.now ?? (() => new Date().toISOString());
+  const spawnPreview = input.spawnPreview ?? spawnDetached;
+  const maxAttempts = 2;
 
-  const runtime: HyperframesUiRuntime = {
+  await persistRuntimeRecord(input.projectPath, {
     project_id: input.projectId,
-    status: "running",
-    pid: child.pid,
+    status: "starting",
+    pid: null,
     port,
     host: "0.0.0.0",
-    url: buildHyperframesStudioUrl({ requestHost: input.requestHost, port, projectName: "hypeframes" }),
-    started_at: (input.now ?? (() => new Date().toISOString()))(),
-  };
-  await ensureDir(path.join(input.projectPath, "logs"));
-  await writeJson(runtimePath(input.projectPath), runtime);
-  return runtime;
+    url,
+    started_at: null,
+    updated_at: now(),
+    attempt: 1,
+    last_error: null,
+  });
+
+  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+    try {
+      const child = spawnPreview(command.executable, args, { cwd: hyperframesPath });
+      if (child.pid === undefined) {
+        throw new Error("HyperFrames preview process did not expose a pid.");
+      }
+
+      const runtime: HyperframesUiRuntime = {
+        project_id: input.projectId,
+        status: "running",
+        pid: child.pid,
+        port,
+        host: "0.0.0.0",
+        url,
+        started_at: now(),
+        updated_at: now(),
+        attempt,
+        last_error: null,
+      };
+      await persistRuntimeRecord(input.projectPath, runtime);
+      return runtime;
+    } catch (error) {
+      const message = errorMessage(error);
+      if (attempt < maxAttempts) {
+        await persistRuntimeRecord(input.projectPath, {
+          project_id: input.projectId,
+          status: "retrying",
+          pid: null,
+          port,
+          host: "0.0.0.0",
+          url,
+          started_at: null,
+          updated_at: now(),
+          attempt,
+          last_error: message,
+        });
+        continue;
+      }
+
+      await persistRuntimeRecord(input.projectPath, {
+        project_id: input.projectId,
+        status: "failed",
+        pid: null,
+        port,
+        host: "0.0.0.0",
+        url,
+        started_at: null,
+        updated_at: now(),
+        attempt,
+        last_error: message,
+      });
+      throw new Error(`HyperFrames UI startup failed after ${attempt} attempts: ${message}`);
+    }
+  }
+
+  throw new Error("HyperFrames UI startup failed before launching the preview process.");
+}
+
+async function persistRuntimeRecord(projectPath: string, runtime: HyperframesUiRuntimeRecord): Promise<void> {
+  await ensureDir(path.join(projectPath, "logs"));
+  await writeJson(runtimePath(projectPath), runtime);
 }
 
 async function findHyperframesCommand(): Promise<HyperframesCommand> {
-  if (process.env.HYPERFRAMES_BIN && await exists(process.env.HYPERFRAMES_BIN)) {
+  if (typeof process.env.HYPERFRAMES_BIN === "string" && process.env.HYPERFRAMES_BIN.length > 0 && await exists(process.env.HYPERFRAMES_BIN)) {
     return { executable: process.env.HYPERFRAMES_BIN, prefixArgs: [] };
   }
 
@@ -108,7 +185,7 @@ async function findHyperframesCommand(): Promise<HyperframesCommand> {
   try {
     const entries = await readdir(npxRoot, { withFileTypes: true });
     for (const entry of entries) {
-      if (!entry.isDirectory()) continue;
+      if (entry.isDirectory() === false) continue;
       const candidate = path.join(npxRoot, entry.name, "node_modules", ".bin", "hyperframes");
       if (await exists(candidate)) {
         return { executable: candidate, prefixArgs: [] };
@@ -161,6 +238,42 @@ function runtimePath(projectPath: string): string {
   return path.join(projectPath, "logs", "hyperframes_ui.json");
 }
 
+function normalizeRuntimeRecord(value: Partial<HyperframesUiRuntimeRecord> | null): HyperframesUiRuntimeRecord | null {
+  if (value === null || typeof value !== "object") {
+    return null;
+  }
+  const status = runtimeStatus(value.status);
+  const pid = typeof value.pid === "number" ? value.pid : null;
+  const port = typeof value.port === "number" ? value.port : null;
+  const url = typeof value.url === "string" ? value.url : null;
+  if (status === null || port === null || url === null) {
+    return null;
+  }
+  if ((status === "running" || status === "stopped") && pid === null) {
+    return null;
+  }
+  const now = new Date().toISOString();
+  return {
+    project_id: typeof value.project_id === "string" ? value.project_id : "unknown",
+    status,
+    pid,
+    port,
+    host: typeof value.host === "string" ? value.host : "0.0.0.0",
+    url,
+    started_at: typeof value.started_at === "string" ? value.started_at : null,
+    updated_at: typeof value.updated_at === "string" ? value.updated_at : now,
+    attempt: typeof value.attempt === "number" && Number.isFinite(value.attempt) ? value.attempt : 1,
+    last_error: typeof value.last_error === "string" ? value.last_error : null,
+  };
+}
+
+function runtimeStatus(value: unknown): HyperframesUiRuntimeStatus | null {
+  if (value === "starting" || value === "retrying" || value === "running" || value === "stopped" || value === "failed") {
+    return value;
+  }
+  return null;
+}
+
 async function readOptionalJson<T>(filePath: string): Promise<T | null> {
   try {
     return JSON.parse(await readFile(filePath, "utf8")) as T;
@@ -176,6 +289,10 @@ async function exists(filePath: string): Promise<boolean> {
   } catch {
     return false;
   }
+}
+
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
 }
 
 function hostWithoutPort(value: string): string {

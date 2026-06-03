@@ -1,0 +1,13 @@
+{
+  "name": "qivance-hyperframes-skills",
+  "version": "1.0.0",
+  "source": "qivance-app:resources/hyperframes-skills/v1",
+  "files": [
+    "hyperframes-composition/SKILL.md",
+    "hyperframes-composition/references/project-contract.md",
+    "hyperframes-render-cli/SKILL.md",
+    "hyperframes-render-cli/references/render-targets.md",
+    "hyperframes-gate-repair/SKILL.md",
+    "hyperframes-gate-repair/references/gate-contract.md"
+  ]
+}
