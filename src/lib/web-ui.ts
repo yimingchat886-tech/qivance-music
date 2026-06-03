@@ -9,6 +9,22 @@ export type StoryboardImportSummary =
   | { status: "pending" }
   | { status: "imported"; sceneCount: number; captionCount: number; visualCount: number };
 
+export type HyperframesSkillsSummary = {
+  status: "pending" | "passed" | "failed";
+  name: string | null;
+  version: string | null;
+  hash: string | null;
+  source: string | null;
+  cacheStatus: string | null;
+  preparedAt: string | null;
+  skillPaths: string[];
+  failureReason: string | null;
+  statusPath: string;
+  qaPath: string;
+  statusReportExists: boolean;
+  qaReportExists: boolean;
+};
+
 export type ProjectSummary = {
   projectId: string;
   projectPath: string;
@@ -25,6 +41,7 @@ export type ProjectSummary = {
   gateProgress: GateProgressStep[];
   hyperframesUi: HyperframesUiStatus;
   storyboardImport: StoryboardImportSummary;
+  hyperframesSkills: HyperframesSkillsSummary;
   artifactGroups: ArtifactGroup[];
   availableDownloads: Array<{ label: string; relativePath: string }>;
 };
@@ -71,6 +88,10 @@ export async function loadProjectSummary(projectPath: string, requestHost?: stri
     gateProgress: await loadGateProgress(projectPath),
     hyperframesUi: rewriteHyperframesUrl(hyperframesUi, requestHost),
     storyboardImport: await loadStoryboardImportSummary(projectPath, workflowState),
+    hyperframesSkills: await loadHyperframesSkillsSummary(
+      projectPath,
+      artifactGroups.find((group) => group.id === "hyperframes_skills"),
+    ),
     artifactGroups,
     availableDownloads,
   };
@@ -171,8 +192,13 @@ export function renderHyperframesPage(project: ProjectSummary, options: { error?
   const projectId = encodeURIComponent(project.projectId);
   const url = project.hyperframesUi.url;
   const hypeframesGroup = project.artifactGroups.find((group) => group.id === "hypeframes_project");
+  const skillsGroup = project.artifactGroups.find((group) => group.id === "hyperframes_skills");
   const codexGroup = project.artifactGroups.find((group) => group.id === "wsl_codex_agent");
   const renderGroup = project.artifactGroups.find((group) => group.id === "render_preview");
+  const codexForbiddenStep = project.gateProgress.find((step) => step.id === "codex_forbidden_path");
+  const codexForbiddenIssues = codexForbiddenStep && codexForbiddenStep.issues.length > 0
+    ? `<p class="error">${escapeHtml(codexForbiddenStep.issues.join(" "))}</p>`
+    : "";
   const pageGroups = [hypeframesGroup, codexGroup].filter((group): group is ArtifactGroup => Boolean(group));
   const directUrl = url
     ? `<p>Direct URL: <a href="${escapeHtml(url)}">${escapeHtml(url)}</a></p>`
@@ -181,9 +207,11 @@ export function renderHyperframesPage(project: ProjectSummary, options: { error?
     ? `<iframe src="${escapeHtml(url)}" title="HyperFrames UI"></iframe>`
     : `<p class="muted">HyperFrames UI is not running.</p>`;
   const codexArtifacts = codexGroup?.artifacts ?? [];
-  const hypeframesArtifacts = hypeframesGroup?.artifacts ?? [];
   const linkList = (artifacts: ArtifactItem[]) => artifacts
-    .map((artifact) => `<li>${escapeHtml(artifact.label)} ${artifactPath(project, artifact.relativePath, artifact.exists)}${artifact.exists ? "" : ' <span class="muted">missing</span>'}</li>`)
+    .map((artifact) => {
+      const status = artifact.exists ? "" : ` <span class="muted">${escapeHtml(artifactUnavailableLabel(artifact))}</span>`;
+      return `<li>${escapeHtml(artifact.label)} ${artifactPath(project, artifact.relativePath, artifact.exists)}${status}</li>`;
+    })
     .join("\n");
 
   return layout(`HyperFrames · ${project.topic}`, `${options.error ? `<p class="error">${escapeHtml(options.error)}</p>` : ""}
@@ -204,8 +232,7 @@ export function renderHyperframesPage(project: ProjectSummary, options: { error?
   </article>
   <article>
     <h2>HyperFrames Skills</h2>
-    <p>Status: <code>${escapeHtml(hypeframesGroup?.status ?? "pending")}</code></p>
-    <ul>${linkList(hypeframesArtifacts.filter((artifact) => /skill/i.test(artifact.label)))}</ul>
+    ${renderHyperframesSkillsDependency(project, skillsGroup)}
   </article>
   <article>
     <h2>Codex Run Logs</h2>
@@ -213,7 +240,8 @@ export function renderHyperframesPage(project: ProjectSummary, options: { error?
   </article>
   <article>
     <h2>Gate Status</h2>
-    <p>Codex forbidden path gate: <code>${escapeHtml(codexGroup?.status ?? "pending")}</code></p>
+    <p>Codex forbidden path gate: <code>${escapeHtml(codexForbiddenStep?.status ?? "pending")}</code></p>
+    ${codexForbiddenIssues}
     <p>HypeFrames File QA: <code>${escapeHtml(hypeframesGroup?.status ?? "pending")}</code></p>
     <p>Render QA: <code>${escapeHtml(renderGroup?.status ?? "pending")}</code></p>
   </article>
@@ -298,8 +326,47 @@ function renderArtifactGroups(project: ProjectSummary, groups: ArtifactGroup[]):
 }
 
 function renderArtifactItem(project: ProjectSummary, artifact: ArtifactItem): string {
-  const status = artifact.exists ? "" : ` <span class="muted">missing</span>`;
+  const status = artifact.exists ? "" : ` <span class="muted">${escapeHtml(artifactUnavailableLabel(artifact))}</span>`;
   return `<li>${escapeHtml(artifact.label)} ${artifactPath(project, artifact.relativePath, artifact.exists)}${status}</li>`;
+}
+
+function renderHyperframesSkillsDependency(project: ProjectSummary, group?: ArtifactGroup): string {
+  const skills = project.hyperframesSkills;
+  const failureReason = skills.failureReason ? `<p class="error">${escapeHtml(skills.failureReason)}</p>` : "";
+  const debugDetails = skills.skillPaths.length === 0
+    ? ""
+    : `<details><summary>Debug Details</summary><ul>${skills.skillPaths
+        .map((relativePath) => `<li><code>${escapeHtml(relativePath)}</code></li>`)
+        .join("\n")}</ul></details>`;
+  return `<p>Status: <code>${escapeHtml(skills.status)}</code></p>
+  <p>Name: <code>${escapeHtml(skills.name ?? "-")}</code></p>
+  <p>Gate: <code>${escapeHtml(group?.status ?? "pending")}</code></p>
+  <p>Version: <code>${escapeHtml(skills.version ?? "-")}</code></p>
+  <p>Hash: <code>${escapeHtml(skills.hash ?? "-")}</code></p>
+  <p>Source: <code>${escapeHtml(skills.source ?? "-")}</code></p>
+  <p>Cache: <code>${escapeHtml(skills.cacheStatus ?? "-")}</code></p>
+  <p>Prepared: <code>${escapeHtml(skills.preparedAt ?? "-")}</code></p>
+  <p>Manifest / QA: ${dependencyArtifactPath(project, group, skills.statusPath, skills.statusReportExists)} · ${dependencyArtifactPath(project, group, skills.qaPath, skills.qaReportExists)}</p>
+  ${failureReason}
+  ${debugDetails}`;
+}
+
+function dependencyArtifactPath(
+  project: ProjectSummary,
+  group: ArtifactGroup | undefined,
+  relativePath: string,
+  exists: boolean,
+): string {
+  const artifact = group?.artifacts.find((item) => item.relativePath === relativePath);
+  const reportExists = artifact?.exists ?? exists;
+  const unavailable = reportExists
+    ? ""
+    : ` <span class="muted">${escapeHtml(artifact ? artifactUnavailableLabel(artifact) : "not yet produced")}</span>`;
+  return `${artifactPath(project, relativePath, reportExists)}${unavailable}`;
+}
+
+function artifactUnavailableLabel(artifact: ArtifactItem): string {
+  return artifact.availability === "missing" ? "missing" : "not yet produced";
 }
 
 function artifactPath(project: ProjectSummary, relativePath: string, exists: boolean): string {
@@ -335,6 +402,41 @@ function renderHyperframesUi(project: ProjectSummary): string {
     : `<p>Direct URL: <a href="${escapeHtml(project.hyperframesUi.url)}">${escapeHtml(project.hyperframesUi.url)}</a></p>`;
   const subpageLink = `<p><a class="button" href="/projects/${projectId}/hyperframes">打开 HyperFrames 子页面</a></p>`;
   return `${startForm}${status}${issue}${directUrl}${subpageLink}`;
+}
+
+async function loadHyperframesSkillsSummary(
+  projectPath: string,
+  group: ArtifactGroup | undefined,
+): Promise<HyperframesSkillsSummary> {
+  const statusPath = "qa/hypeframes/hyperframes_skills_status.json";
+  const qaPath = "qa/hypeframes/hyperframes_skills_qa_report.json";
+  const status = await readOptionalJson<Record<string, unknown>>(path.join(projectPath, statusPath));
+  return {
+    status: hyperframesSkillsStatus(group, status),
+    name: nullableString(status?.name),
+    version: nullableString(status?.version),
+    hash: nullableString(status?.hash),
+    source: nullableString(status?.source),
+    cacheStatus: nullableString(status?.cache_status),
+    preparedAt: nullableString(status?.prepared_at),
+    skillPaths: stringArray(status?.skill_paths),
+    failureReason: nullableString(status?.failure_reason),
+    statusPath,
+    qaPath,
+    statusReportExists: status !== null,
+    qaReportExists: await exists(path.join(projectPath, qaPath)),
+  };
+}
+
+function hyperframesSkillsStatus(
+  group: ArtifactGroup | undefined,
+  status: Record<string, unknown> | null,
+): HyperframesSkillsSummary["status"] {
+  if (group?.status === "failed") return "failed";
+  if (group?.status === "ready" || group?.status === "warning") return "passed";
+  if (group?.status === "pending" || group?.status === "running") return "pending";
+  const success = typeof status?.success === "boolean" ? status.success : null;
+  return success === true ? "passed" : success === false ? "failed" : "pending";
 }
 
 async function loadStoryboardImportSummary(projectPath: string, workflowState: string): Promise<StoryboardImportSummary> {
@@ -420,6 +522,10 @@ async function exists(filePath: string): Promise<boolean> {
   } catch {
     return false;
   }
+}
+
+function stringArray(value: unknown): string[] {
+  return Array.isArray(value) ? value.filter((item): item is string => typeof item === "string") : [];
 }
 
 function nullableString(value: unknown): string | null {

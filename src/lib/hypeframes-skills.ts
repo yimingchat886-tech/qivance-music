@@ -1,108 +1,133 @@
+import { createHash } from "node:crypto";
 import { readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
-import { ensureDir } from "./fs-utils.ts";
+import { ensureDir, writeJson } from "./fs-utils.ts";
 import { writeQaReport } from "./gate-report.ts";
+import { loadHyperframesSkillsResource, type HyperframesSkillsResource } from "./hyperframes-skills-resource.ts";
 
-const skills = [
-  {
-    dir: "hyperframes-composition",
-    skill: `---
-name: hyperframes-composition
-description: Use this skill when editing Qivance HyperFrames video HTML composition, scene components, captions, visual nodes, beat cues, or styles. Only modify HypeFrames project files and preserve beats.locked.json as the timing source of truth.
----
+export type HyperframesSkillsCacheStatus = "created" | "reused" | "updated" | "failed";
 
-# HyperFrames Composition
-
-Only edit \`hypeframes/**\`, \`qa/hypeframes/hypeframes_revision_notes.md\`, and \`logs/codex/**\`.
-beats.locked.json is the single timing source of truth.
-
-Do not modify:
-
-- \`audio/**\`
-- \`data/timing/**\`
-- \`data/lyrics/**\`
-- \`project_manifest.json\`
-- \`workflow_snapshot.json\`
-- \`dist/**\`
-- \`qa/music/**\`
-- \`qa/timing/**\`
-
-No external URLs. No non-reproducible randomness. Preview-first. Review-only markers must not appear in preview targets.
-`,
-    referenceName: "project-contract.md",
-    reference: `# Project Contract
-
-HypeFrames owns the video HTML composition only. The locked beat grid and section map are read-only inputs.
-`,
-  },
-  {
-    dir: "hyperframes-render-cli",
-    skill: `---
-name: hyperframes-render-cli
-description: Use this skill when validating or rendering a local HyperFrames project with the local HyperFrames CLI, render targets, preview output, review output, and deterministic file checks.
----
-
-# HyperFrames Render CLI
-
-Run lint or inspect first, then render. Do not fake success when the local CLI is unavailable.
-\`preview_composite.mp4\` is the first deliverable. \`preview_composite_review.mp4\` is for internal review.
-Review markers are allowed only in review targets.
-
-Forbidden paths remain forbidden: \`audio/**\`, \`data/timing/**\`, \`data/lyrics/**\`, \`project_manifest.json\`, \`workflow_snapshot.json\`, \`dist/**\`, \`qa/music/**\`, \`qa/timing/**\`.
-`,
-    referenceName: "render-targets.md",
-    reference: `# Render Targets
-
-The preview target must be clean. The review target may include overlays and markers.
-`,
-  },
-  {
-    dir: "hyperframes-gate-repair",
-    skill: `---
-name: hyperframes-gate-repair
-description: Use this skill when repairing HypeFrames File QA failures, Codex forbidden path failures, render target mismatches, missing local assets, unsafe external URLs, or timing alignment warnings.
----
-
-# HyperFrames Gate Repair
-
-Fix only problems named by Gate reports. Do not redesign content subjectively.
-After repair, write \`qa/hypeframes/hypeframes_revision_notes.md\` and rerun the relevant Gate.
-Do not modify forbidden paths: \`audio/**\`, \`data/timing/**\`, \`data/lyrics/**\`, \`project_manifest.json\`, \`workflow_snapshot.json\`, \`dist/**\`, \`qa/music/**\`, \`qa/timing/**\`.
-`,
-    referenceName: "gate-contract.md",
-    reference: `# Gate Contract
-
-Gate reports are the only source for repair scope. Do not claim QA passed unless the rule report exists.
-`,
-  },
-];
-
-export async function ensureHyperframesSkills(projectPath: string): Promise<{
+export type HyperframesSkillsPrepareResult = {
+  name: string;
+  version: string;
+  hash: string;
+  source: string;
+  cacheStatus: HyperframesSkillsCacheStatus;
+  preparedAt: string;
   skillPaths: string[];
   qaReportPath: string;
-}> {
-  const skillPaths: string[] = [];
-  for (const skill of skills) {
-    const skillDir = path.join(projectPath, "hypeframes", ".agents", "skills", skill.dir);
-    const referenceDir = path.join(skillDir, "references");
-    await ensureDir(referenceDir);
-    const skillPath = path.join(skillDir, "SKILL.md");
-    const referencePath = path.join(referenceDir, skill.referenceName);
-    await writeFile(skillPath, skill.skill, "utf8");
-    await writeFile(referencePath, skill.reference, "utf8");
-    skillPaths.push(path.relative(projectPath, skillPath).split(path.sep).join("/"));
+  statusPath: string;
+};
+
+type EnsureHyperframesSkillsOptions = {
+  resource?: HyperframesSkillsResource;
+};
+
+const cacheRootRelativePath = "hypeframes/.agents/skills";
+const statusPath = "qa/hypeframes/hyperframes_skills_status.json";
+const qaReportPath = "qa/hypeframes/hyperframes_skills_qa_report.json";
+
+export async function ensureHyperframesSkills(
+  projectPath: string,
+  options: EnsureHyperframesSkillsOptions = {},
+): Promise<HyperframesSkillsPrepareResult> {
+  const resource = options.resource ?? await loadHyperframesSkillsResource();
+  const skillPaths = resource.files
+    .filter((file) => file.relativePath.endsWith("/SKILL.md"))
+    .map((file) => path.posix.join(cacheRootRelativePath, file.relativePath));
+  const preparedAt = new Date().toISOString();
+
+  let cacheStatus: HyperframesSkillsCacheStatus;
+  let blockingIssues: string[];
+  try {
+    cacheStatus = await prepareCache(projectPath, resource);
+    blockingIssues = await validateSkills(projectPath, skillPaths);
+  } catch (error) {
+    const failureReason = "Failed to prepare HyperFrames skills: " + errorMessage(error);
+    await writeSkillsAudit(projectPath, resource, "failed", skillPaths, preparedAt, false, failureReason, [failureReason]);
+    throw new Error(failureReason);
   }
 
-  const blockingIssues = await validateSkills(projectPath, skillPaths);
-  const qaReportPath = "qa/hypeframes/hyperframes_skills_qa_report.json";
+  const success = blockingIssues.length === 0;
+  const failureReason = success ? null : blockingIssues.join(" ");
+  await writeSkillsAudit(projectPath, resource, cacheStatus, skillPaths, preparedAt, success, failureReason, blockingIssues);
+  return {
+    name: resource.name,
+    version: resource.version,
+    hash: resource.hash,
+    source: resource.source,
+    cacheStatus,
+    preparedAt,
+    skillPaths,
+    qaReportPath,
+    statusPath,
+  };
+}
+
+async function writeSkillsAudit(
+  projectPath: string,
+  resource: HyperframesSkillsResource,
+  cacheStatus: HyperframesSkillsCacheStatus,
+  skillPaths: string[],
+  preparedAt: string,
+  success: boolean,
+  failureReason: string | null,
+  blockingIssues: string[],
+): Promise<void> {
+  const metadata = {
+    name: resource.name,
+    version: resource.version,
+    hash: resource.hash,
+    source: resource.source,
+    cache_status: cacheStatus,
+    cache_root: cacheRootRelativePath,
+    skill_paths: skillPaths,
+    prepared_at: preparedAt,
+    success,
+    failure_reason: failureReason,
+  };
+
+  await writeJson(path.join(projectPath, statusPath), metadata);
   await writeQaReport(projectPath, qaReportPath, {
     gate_name: "HyperFrames Skills QA",
-    status: blockingIssues.length > 0 ? "rule_fail_blocked" : "rule_pass",
+    status: success ? "rule_pass" : "rule_fail_blocked",
     blocking_issues: blockingIssues,
-    input_artifacts: skillPaths,
-    output_artifacts: [qaReportPath],
+    input_artifacts: [resource.source],
+    output_artifacts: [statusPath, qaReportPath],
+    metadata,
   });
-  return { skillPaths, qaReportPath };
+}
+
+async function prepareCache(
+  projectPath: string,
+  resource: HyperframesSkillsResource,
+): Promise<HyperframesSkillsCacheStatus> {
+  const existingHash = await hashCachedResource(projectPath, resource);
+  if (existingHash === resource.hash) return "reused";
+
+  const cacheStatus: HyperframesSkillsCacheStatus = existingHash === null ? "created" : "updated";
+  for (const file of resource.files) {
+    const targetPath = path.join(projectPath, cacheRootRelativePath, file.relativePath);
+    await ensureDir(path.dirname(targetPath));
+    await writeFile(targetPath, file.content, "utf8");
+  }
+  return cacheStatus;
+}
+
+async function hashCachedResource(
+  projectPath: string,
+  resource: HyperframesSkillsResource,
+): Promise<string | null> {
+  const hashes: string[] = [];
+  for (const file of resource.files) {
+    try {
+      const content = await readFile(path.join(projectPath, cacheRootRelativePath, file.relativePath), "utf8");
+      hashes.push(`${file.relativePath}\n${sha256(content)}`);
+    } catch {
+      return null;
+    }
+  }
+  return sha256(hashes.join("\n"));
 }
 
 async function validateSkills(projectPath: string, skillPaths: string[]): Promise<string[]> {
@@ -126,4 +151,12 @@ async function validateSkills(projectPath: string, skillPaths: string[]): Promis
     }
   }
   return blockingIssues;
+}
+
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+function sha256(value: string): string {
+  return createHash("sha256").update(value).digest("hex");
 }

@@ -192,6 +192,24 @@ test("standalone HyperFrames page renders runtime controls, iframe, artifacts, a
   await writeJson(path.join(imported.projectPath, "qa", "hypeframes", "hypeframes_file_qa_report.json"), {
     status: "rule_pass",
   });
+  await writeJson(path.join(imported.projectPath, "qa", "hypeframes", "hyperframes_skills_status.json"), {
+    name: "qivance-hyperframes-skills",
+    version: "1.0.0",
+    hash: "b".repeat(64),
+    source: "qivance-app:resources/hyperframes-skills/v1",
+    cache_status: "created",
+    prepared_at: "2026-06-02T00:00:00.000Z",
+    success: true,
+    failure_reason: null,
+    skill_paths: ["hypeframes/.agents/skills/hyperframes-composition/SKILL.md"],
+  });
+  await writeJson(path.join(imported.projectPath, "qa", "hypeframes", "hyperframes_skills_qa_report.json"), {
+    status: "rule_pass",
+  });
+  await writeJson(path.join(imported.projectPath, "qa", "hypeframes", "codex_forbidden_path_qa_report.json"), {
+    status: "rule_fail_blocked",
+    blocking_issues: ["Codex attempted to modify HyperFrames skill files."],
+  });
 
   const summary = await loadProjectSummary(imported.projectPath);
   const html = renderHyperframesPage(summary, { error: "Missing HypeFrames project file." });
@@ -204,8 +222,21 @@ test("standalone HyperFrames page renders runtime controls, iframe, artifacts, a
   assert.ok(html.includes("HypeFrames Project"));
   assert.ok(html.includes("WSL Codex CLI"));
   assert.ok(html.includes("HyperFrames Skills"));
+  assert.ok(html.includes("Name: <code>qivance-hyperframes-skills</code>"));
+  assert.ok(html.includes("Version: <code>1.0.0</code>"));
+  assert.ok(html.includes("Hash: <code>" + "b".repeat(64) + "</code>"));
+  assert.ok(html.includes("Source: <code>qivance-app:resources/hyperframes-skills/v1</code>"));
+  assert.ok(html.includes("Cache: <code>created</code>"));
+  assert.ok(html.includes("Manifest / QA"));
+  assert.ok(html.includes("qa/hypeframes/hyperframes_skills_status.json"));
+  assert.ok(html.includes("qa/hypeframes/hyperframes_skills_qa_report.json"));
+  assert.ok(html.includes("Debug Details"));
+  assert.ok(html.includes("hypeframes/.agents/skills/hyperframes-composition/SKILL.md"));
+  assert.doesNotMatch(html, /HyperFrames composition skill/);
   assert.ok(html.includes("Codex Run Logs"));
   assert.ok(html.includes("Gate Status"));
+  assert.ok(html.includes("Codex forbidden path gate: <code>fail</code>"));
+  assert.ok(html.includes("Codex attempted to modify HyperFrames skill files."));
   assert.ok(html.includes("hypeframes/src/index.html"));
   assert.ok(html.includes("HypeFrames File QA"));
 
@@ -215,6 +246,60 @@ test("standalone HyperFrames page renders runtime controls, iframe, artifacts, a
   });
   assert.doesNotMatch(stoppedHtml, /<iframe\b/);
   assert.match(stoppedHtml, /HyperFrames UI is not running/);
+});
+
+
+test("standalone HyperFrames page uses the skills QA gate as dependency status authority", async () => {
+  const tempRoot = await mkdtemp(path.join(tmpdir(), "qivance-web-hyperframes-skills-gate-"));
+  const sourceAudio = path.join(tempRoot, "raw.mp3");
+  await writeFile(sourceAudio, Buffer.from("fake-audio-for-skills-gate-ui"));
+  const imported = await importAcceptedMusicProject({
+    storageRoot: path.join(tempRoot, "projects"),
+    topic: "skills gate 权威状态测试",
+    targetDuration: 60,
+    lyricsMarkdown: "[Verse]\nskills gate 是权威",
+    rawAudioPath: sourceAudio,
+  });
+  await writeJson(path.join(imported.projectPath, "qa", "hypeframes", "hyperframes_skills_qa_report.json"), {
+    status: "rule_pass",
+  });
+
+  const html = renderHyperframesPage(await loadProjectSummary(imported.projectPath));
+
+  assert.match(html, /<h2>HyperFrames Skills<\/h2>[\s\S]*Status: <code>passed<\/code>/);
+  assert.match(
+    html,
+    /qa\/hypeframes\/hyperframes_skills_status\.json<\/code> <span class="muted">not yet produced<\/span>/,
+  );
+});
+
+test("standalone HyperFrames page keeps unfinished runtime artifacts pending until a gate finishes", async () => {
+  const tempRoot = await mkdtemp(path.join(tmpdir(), "qivance-web-hyperframes-pending-"));
+  const sourceAudio = path.join(tempRoot, "raw.mp3");
+  await writeFile(sourceAudio, Buffer.from("fake-audio-for-pending-ui"));
+  const imported = await importAcceptedMusicProject({
+    storageRoot: path.join(tempRoot, "projects"),
+    topic: "运行中状态语义测试",
+    targetDuration: 60,
+    lyricsMarkdown: "[Verse]\n运行中不能误报缺失",
+    rawAudioPath: sourceAudio,
+  });
+
+  let html = renderHyperframesPage(await loadProjectSummary(imported.projectPath));
+
+  assert.match(html, /not yet produced/);
+  assert.match(
+    html,
+    /qa\/hypeframes\/hyperframes_skills_status\.json<\/code> <span class="muted">not yet produced<\/span>/,
+  );
+  assert.doesNotMatch(html, /<span class="muted">missing<\/span>/);
+
+  await writeJson(path.join(imported.projectPath, "qa", "hypeframes", "hypeframes_file_qa_report.json"), {
+    status: "rule_pass",
+  });
+  html = renderHyperframesPage(await loadProjectSummary(imported.projectPath));
+
+  assert.match(html, /<span class="muted">missing<\/span>/);
 });
 
 

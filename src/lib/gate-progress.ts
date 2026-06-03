@@ -87,7 +87,7 @@ const artifactGroupByStepId: Record<GateProgressStepId, string> = {
   timing_schema: "timing_schema",
   storyboard_gate: "storyboard_gate",
   hypeframes_project: "hypeframes_project",
-  hyperframes_skills: "hypeframes_project",
+  hyperframes_skills: "hyperframes_skills",
   wsl_codex_agent: "wsl_codex_agent",
   codex_forbidden_path: "wsl_codex_agent",
   hyperframes_ui: "render_preview",

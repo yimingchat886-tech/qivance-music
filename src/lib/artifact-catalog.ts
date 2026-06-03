@@ -4,12 +4,14 @@ import path from "node:path";
 import { writeJson } from "./fs-utils.ts";
 
 export type ArtifactStatus = "pending" | "running" | "ready" | "warning" | "failed";
+export type ArtifactAvailability = "ready" | "pending" | "missing";
 
 export type ArtifactItem = {
   label: string;
   relativePath: string;
   required: boolean;
   exists: boolean;
+  availability: ArtifactAvailability;
   sizeBytes: number | null;
   sha256: string | null;
   contentType: string;
@@ -120,11 +122,17 @@ const groupDefinitions: ArtifactGroupDefinition[] = [
       { label: "Render targets", relativePath: "hypeframes/render_targets/render_targets.json" },
       { label: "HypeFrames manifest", relativePath: "hypeframes/hypeframes_project_manifest.json" },
       { label: "HypeFrames file QA", relativePath: "qa/hypeframes/hypeframes_file_qa_report.json" },
-      { label: "HyperFrames skills QA", relativePath: "qa/hypeframes/hyperframes_skills_qa_report.json", required: false },
-      { label: "HyperFrames composition skill", relativePath: "hypeframes/.agents/skills/hyperframes-composition/SKILL.md", required: false },
-      { label: "HyperFrames render CLI skill", relativePath: "hypeframes/.agents/skills/hyperframes-render-cli/SKILL.md", required: false },
-      { label: "HyperFrames gate repair skill", relativePath: "hypeframes/.agents/skills/hyperframes-gate-repair/SKILL.md", required: false },
       { label: "HypeFrames revision notes", relativePath: "qa/hypeframes/hypeframes_revision_notes.md", required: false },
+    ],
+  },
+  {
+    id: "hyperframes_skills",
+    label: "HyperFrames Skills",
+    description: "Qivance app-global HyperFrames skills dependency status and QA.",
+    qaPath: "qa/hypeframes/hyperframes_skills_qa_report.json",
+    artifacts: [
+      { label: "HyperFrames skills status", relativePath: "qa/hypeframes/hyperframes_skills_status.json", required: false },
+      { label: "HyperFrames skills QA", relativePath: "qa/hypeframes/hyperframes_skills_qa_report.json", required: false },
     ],
   },
   {
@@ -176,13 +184,17 @@ export async function loadArtifactCatalog(
         ? await readOptionalJson<{ status?: unknown }>(path.join(projectPath, definition.qaPath))
         : null;
 
+      const groupStatus = statusFromQaAndArtifacts(qaReport?.status, artifacts);
       return {
         id: definition.id,
         label: definition.label,
         description: definition.description,
         qaPath: definition.qaPath,
-        status: statusFromQaAndArtifacts(qaReport?.status, artifacts),
-        artifacts,
+        status: groupStatus,
+        artifacts: artifacts.map((artifact) => ({
+          ...artifact,
+          availability: artifactAvailability(artifact, groupStatus),
+        })),
       };
     }),
   );
@@ -252,6 +264,7 @@ async function artifactItem(
       relativePath,
       required: definition.required ?? true,
       exists: true,
+      availability: "ready",
       sizeBytes: fileStat.size,
       sha256: includeHashes ? await sha256File(absolutePath) : null,
       contentType: contentType(relativePath),
@@ -267,10 +280,18 @@ function missingArtifact(definition: ArtifactDefinition, relativePath: string): 
     relativePath,
     required: definition.required ?? true,
     exists: false,
+    availability: "pending",
     sizeBytes: null,
     sha256: null,
     contentType: contentType(relativePath),
   };
+}
+
+function artifactAvailability(artifact: ArtifactItem, groupStatus: ArtifactStatus): ArtifactAvailability {
+  if (artifact.exists) return "ready";
+  if (artifact.required === false) return "pending";
+  if (groupStatus === "failed" || groupStatus === "ready" || groupStatus === "warning") return "missing";
+  return "pending";
 }
 
 function statusFromQaAndArtifacts(status: unknown, artifacts: ArtifactItem[]): ArtifactStatus {
