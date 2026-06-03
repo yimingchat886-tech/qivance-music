@@ -11,7 +11,15 @@ const forbiddenPatterns = [
   "dist/**",
   "qa/music/**",
   "qa/timing/**",
+  "hypeframes/.agents/skills/**",
 ];
+
+const nestedHypeframesForbiddenPatterns = [
+  ".agents/skills/**",
+];
+
+const hyperframesSkillsError =
+  "Codex attempted to modify HyperFrames skill files. HyperFrames skills are read-only runtime dependencies and must not be changed by project-level runs.";
 
 export async function runCodexForbiddenPathGate(input: {
   projectPath: string;
@@ -26,7 +34,11 @@ export async function runCodexForbiddenPathGate(input: {
     ...diff.deleted,
     ...(input.changedFilesFromGit ?? []).filter((relativePath) => matchesForbiddenPath(relativePath)),
   ]);
-  const blockingIssues = [...changed].sort().map((relativePath) => `Codex modified forbidden path: ${relativePath}`);
+  const blockingIssues = [...changed].sort().map((relativePath) =>
+    isHyperframesSkillsPath(relativePath)
+      ? `${hyperframesSkillsError} Path: ${relativePath}`
+      : `Codex modified forbidden path: ${relativePath}`
+  );
 
   await writeQaReport(input.projectPath, "qa/hypeframes/codex_forbidden_path_qa_report.json", {
     gate_name: "Codex Forbidden Path Gate",
@@ -48,11 +60,22 @@ export function forbiddenSnapshotIncludes(): string[] {
 }
 
 function matchesForbiddenPath(relativePath: string): boolean {
-  const normalized = relativePath.split(path.sep).join("/");
-  return forbiddenPatterns.some((pattern) => {
-    if (pattern.endsWith("/**")) {
-      return normalized.startsWith(pattern.slice(0, -3) + "/");
-    }
-    return normalized === pattern;
-  });
+  const normalized = normalizeRelativePath(relativePath);
+  return [...forbiddenPatterns, ...nestedHypeframesForbiddenPatterns].some((pattern) => matchesPattern(normalized, pattern));
+}
+
+function isHyperframesSkillsPath(relativePath: string): boolean {
+  const normalized = normalizeRelativePath(relativePath);
+  return matchesPattern(normalized, "hypeframes/.agents/skills/**") || matchesPattern(normalized, ".agents/skills/**");
+}
+
+function matchesPattern(relativePath: string, pattern: string): boolean {
+  if (pattern.endsWith("/**")) {
+    return relativePath.startsWith(pattern.slice(0, -3) + "/");
+  }
+  return relativePath === pattern;
+}
+
+function normalizeRelativePath(relativePath: string): string {
+  return relativePath.split(path.sep).join("/").replace(/^\.\/+/, "");
 }

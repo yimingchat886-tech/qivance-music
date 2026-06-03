@@ -14,7 +14,7 @@ import {
   generateSectionMap,
   lockAcceptedMusic,
 } from "./lib/post-minimax-workflow.ts";
-import { importPastedStoryboard, startProjectHyperframesUi } from "./lib/project-actions.ts";
+import { deleteProject, importPastedStoryboard, startProjectHyperframesUi } from "./lib/project-actions.ts";
 import { loadHyperframesUiStatus } from "./lib/hyperframes-ui.ts";
 import { formatStartupMessage } from "./lib/server-urls.ts";
 import { runApprovedSceneToPreview } from "./lib/video-preview-workflow.ts";
@@ -165,6 +165,14 @@ async function route(request: IncomingMessage, response: ServerResponse): Promis
     const projectId = decodeURIComponent(downloadMatch[1]);
     const relativePath = url.searchParams.get("path") ?? "";
     await sendDownload(response, projectPathForId(projectId), relativePath);
+    return;
+  }
+
+  const deleteProjectMatch = url.pathname.match(/^\/projects\/([^/]+)\/delete$/);
+  if (request.method === "POST" && deleteProjectMatch) {
+    const projectId = decodeURIComponent(deleteProjectMatch[1]);
+    await deleteProject(projectPathForId(projectId));
+    redirect(response, "/projects");
     return;
   }
 

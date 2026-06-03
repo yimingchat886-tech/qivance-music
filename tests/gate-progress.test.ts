@@ -27,6 +27,17 @@ test("gate progress maps project QA reports into visible stages", async () => {
     status: "rule_fail_blocked",
     blocking_issues: ["Section map overlaps."],
   });
+  await writeJson(path.join(projectPath, "qa", "hypeframes", "hyperframes_skills_status.json"), {
+    name: "qivance-hyperframes-skills",
+    version: "1.0.0",
+    hash: "a".repeat(64),
+    source: "qivance-app:resources/hyperframes-skills/v1",
+    cache_status: "created",
+    success: true,
+  });
+  await writeJson(path.join(projectPath, "qa", "hypeframes", "hyperframes_skills_qa_report.json"), {
+    status: "rule_pass",
+  });
   await writeJson(path.join(projectPath, "logs", "hyperframes_ui.json"), {
     status: "running",
     url: "http://192.168.1.10:3999/#project/hypeframes",
@@ -47,6 +58,7 @@ test("gate progress maps project QA reports into visible stages", async () => {
   const musicStep = progress.find((step) => step.id === "music_ingest");
   const beatStep = progress.find((step) => step.id === "beat_lock");
   const timingStep = progress.find((step) => step.id === "timing_schema");
+  const skillsStep = progress.find((step) => step.id === "hyperframes_skills");
 
   assert.equal(musicStep?.status, "pass");
   assert.equal(musicStep?.qaPath, "qa/music/music_ingest_qa_report.json");
@@ -66,6 +78,12 @@ test("gate progress maps project QA reports into visible stages", async () => {
   assert.ok((timingStep?.artifactCount ?? 0) >= 3);
   assert.equal(timingStep?.availableArtifactCount, 1);
   assert.deepEqual(timingStep?.issues, ["Section map overlaps."]);
+
+  assert.equal(skillsStep?.status, "pass");
+  assert.equal(skillsStep?.completed, true);
+  assert.equal(skillsStep?.artifactCount, 2);
+  assert.equal(skillsStep?.availableArtifactCount, 2);
+
   const uiStep = progress.find((step) => step.id === "hyperframes_ui");
   assert.equal(uiStep?.status, "running");
   assert.equal(uiStep?.completed, false);

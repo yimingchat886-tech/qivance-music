@@ -44,19 +44,26 @@ export async function runWslCodexExec(input: {
   };
   await writeFile(path.join(input.projectPath, logPaths.prompt), input.prompt, "utf8");
 
-  const cwdWsl = `${detection.projectPathWsl}/${input.cwdRelativePath.replaceAll("\\", "/")}`.replace(/\/+/g, "/");
-  const modelArgs = input.model ? ` --model ${shellQuote(input.model)}` : "";
-  const script = [
-    `cd ${shellQuote(cwdWsl)}`,
-    `exec ${shellQuote(detection.codexPath)} exec --json --sandbox workspace-write${modelArgs} -`,
-  ].join(" && ");
+  const cwdWsl = wslJoin(detection.projectPathWsl, input.cwdRelativePath);
+  const modelArgs = input.model ? `--model ${shellQuote(input.model)}` : "";
+  const codexCommand = [
+    `exec ${shellQuote(detection.codexPath)} exec`,
+    "--json",
+    "--skip-git-repo-check",
+    "--sandbox workspace-write",
+    "-c sandbox_workspace_write.network_access=true",
+    `-c ${shellQuote('default_permissions=":workspace"')}`,
+    `-C ${shellQuote(cwdWsl)}`,
+    modelArgs,
+  ].filter(Boolean).join(" ");
+  const script = [`cd ${shellQuote(cwdWsl)}`, codexCommand].join(" && ");
   const result = await runWslCommand({
     wslExe: detection.wslExe,
     distro: detection.distro,
     user: detection.user,
     script,
     stdin: input.prompt,
-    timeoutMs: 120_000,
+    timeoutMs: 600_000,
   });
   await writeFile(path.join(input.projectPath, logPaths.stdoutJsonl), result.stdout, "utf8");
   await writeFile(path.join(input.projectPath, logPaths.stderr), result.stderr, "utf8");
@@ -176,6 +183,11 @@ async function copyLatest(
     await copyFile(path.join(projectPath, logPaths[key]), path.join(projectPath, latest[key]));
   }
   await readFile(path.join(projectPath, latest.summary), "utf8");
+}
+
+function wslJoin(rootPath: string, relativePath: string): string {
+  const relative = relativePath === "." ? "" : relativePath.replaceAll("\\", "/").replace(/^\/+/, "");
+  return [rootPath, relative].filter(Boolean).join("/").replace(/\/+/g, "/");
 }
 
 function stringValue(value: unknown): string | null {
