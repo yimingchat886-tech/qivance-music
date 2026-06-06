@@ -1,0 +1,3 @@
+[submodule "vendor/html-video"]
+	path = vendor/html-video
+	url = https://github.com/nexu-io/html-video

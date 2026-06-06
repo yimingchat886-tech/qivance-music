@@ -1,0 +1,17 @@
+{
+  "schemaVersion": 1,
+  "audioTakeId": "take_demo_001",
+  "lines": [
+    {
+      "lineId": "line_001",
+      "text": "RAG checks facts before it raps",
+      "startSec": 0,
+      "endSec": 4,
+      "words": [
+        { "word": "RAG", "startSec": 0, "endSec": 0.5, "isKeyword": true },
+        { "word": "facts", "startSec": 1, "endSec": 1.5, "isKeyword": true },
+        { "word": "raps", "startSec": 3, "endSec": 3.5, "isKeyword": true }
+      ]
+    }
+  ]
+}

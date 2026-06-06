@@ -1,0 +1,10 @@
+packages:
+  - "."
+  - "vendor/html-video/packages/*"
+  - "vendor/html-video/templates/*"
+allowBuilds:
+  '@google/genai': true
+  esbuild: true
+  onnxruntime-node: true
+  protobufjs: true
+  sharp: true

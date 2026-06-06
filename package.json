@@ -4,12 +4,22 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "test": "node --experimental-strip-types --test tests/*.test.ts",
+    "test": "node --experimental-strip-types --test tests/html-video-*.test.ts",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
     "dev": "node --experimental-strip-types src/server.ts",
-    "workflow": "node --experimental-strip-types src/cli/run-workflow.ts"
+    "workflow": "node --experimental-strip-types src/cli/run-workflow.ts",
+    "demo:html-video": "node --experimental-strip-types scripts/demo-html-video-from-fixture.ts fixtures/html-video-demo"
+  },
+  "dependencies": {
+    "@html-video/adapter-hyperframes": "workspace:*",
+    "@html-video/content-graph": "workspace:*",
+    "@html-video/core": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "typescript": "^5.9.0"
   },
   "engines": {
     "node": ">=24"
   }
 }
-
