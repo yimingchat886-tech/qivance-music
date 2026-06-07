@@ -122,7 +122,7 @@ export async function loadGateProgress(projectPath: string): Promise<GateProgres
       return {
         id: step.id,
         label: step.label,
-        status: step.runningStates.includes(workflowState) ? "running" : "pending",
+        status: (step.runningStates as readonly string[]).includes(workflowState) ? "running" : "pending",
         issues: [],
         warnings: [],
         completed: false,

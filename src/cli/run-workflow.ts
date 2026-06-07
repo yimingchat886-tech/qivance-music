@@ -1,23 +1,10 @@
-import path from "node:path";
-import {
-  approvePreview,
-  generateBeatLock,
-  generateScenePlans,
-  generateSectionMap,
-  lockAcceptedMusic,
-} from "../lib/post-minimax-workflow.ts";
-import { runApprovedSceneToPreview } from "../lib/video-preview-workflow.ts";
+import { runHtmlVideoWorkflow } from "../lib/video-html/html-video-workflow.ts";
 
-const projectPath = process.argv[2] ? path.resolve(process.argv[2]) : "";
-if (!projectPath) {
-  console.error("Usage: npm run workflow -- /absolute/path/to/project_projectid");
+const smallProjectId = process.argv[2]?.trim();
+if (!smallProjectId) {
+  console.error("Usage: pnpm workflow <small_project_id>");
   process.exit(1);
 }
 
-await lockAcceptedMusic(projectPath);
-await generateBeatLock(projectPath);
-await generateSectionMap(projectPath);
-await generateScenePlans(projectPath);
-await runApprovedSceneToPreview(projectPath, "cli");
-await approvePreview(projectPath, "cli");
-console.log(`Post-MiniMax workflow complete: ${projectPath}`);
+const result = await runHtmlVideoWorkflow(smallProjectId);
+console.log(`html-video workflow complete: ${result.paths.finalMp4Path}`);

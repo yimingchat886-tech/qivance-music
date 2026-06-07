@@ -1,0 +1,6 @@
+{
+  "schemaVersion": 1,
+  "audioTakeId": "take_demo_001",
+  "bpm": 120,
+  "beats": [0, 0.5, 1, 1.5, 2, 2.5, 3, 3.5]
+}

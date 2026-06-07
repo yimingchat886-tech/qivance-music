@@ -1,32 +1,13 @@
 import { createReadStream } from "node:fs";
-import { mkdir, stat } from "node:fs/promises";
+import { mkdir, readdir, stat } from "node:fs/promises";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { networkInterfaces } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { saveAudioAsset } from "./lib/audio-db.ts";
-import { importAcceptedMusicProject } from "./lib/import-project.ts";
-import { parseMultipartForm, type MultipartForm } from "./lib/multipart-form.ts";
-import {
-  approvePreview,
-  generateBeatLock,
-  generateScenePlans,
-  generateSectionMap,
-  lockAcceptedMusic,
-} from "./lib/post-minimax-workflow.ts";
-import { deleteProject, importPastedStoryboard, startProjectHyperframesUi } from "./lib/project-actions.ts";
-import { loadHyperframesUiStatus } from "./lib/hyperframes-ui.ts";
+import { resolveSmallProjectPaths } from "./lib/project-core/paths.ts";
 import { formatStartupMessage } from "./lib/server-urls.ts";
-import { runApprovedSceneToPreview } from "./lib/video-preview-workflow.ts";
-import {
-  listProjectSummaries,
-  loadProjectSummary,
-  renderHyperframesPage,
-  renderImportPage,
-  renderNotFound,
-  renderProjectWorkspace,
-  renderProjectsPage,
-} from "./lib/web-ui.ts";
+import { runHtmlVideoWorkflow } from "./lib/video-html/html-video-workflow.ts";
+import { loadHtmlVideoPreviewModel, resolvePreviewFramePath } from "./lib/video-html/preview-model.ts";
 
 const rootDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const storageRoot = process.env.QIVANCE_PROJECTS_ROOT ?? path.join(rootDir, "projects");
@@ -56,130 +37,44 @@ async function route(request: IncomingMessage, response: ServerResponse): Promis
     redirect(response, "/projects");
     return;
   }
+
   if (request.method === "GET" && url.pathname === "/projects") {
-    sendHtml(response, renderProjectsPage(await listProjectSummaries(storageRoot)));
-    return;
-  }
-  if (request.method === "GET" && url.pathname === "/projects/new") {
-    sendHtml(response, renderImportPage());
-    return;
-  }
-  if (request.method === "POST" && url.pathname === "/projects/import") {
-    const form = parseMultipartForm(String(request.headers["content-type"] ?? ""), await readBody(request));
-    const audioFile = requiredFile(form, "rawAudioFile");
-    const audioAsset = await saveAudioAsset(storageRoot, {
-      filename: audioFile.filename,
-      mimeType: audioFile.mimeType,
-      data: audioFile.data,
-    });
-    const imported = await importAcceptedMusicProject({
-      storageRoot,
-      topic: requiredField(form, "topic"),
-      targetDuration: requiredPositiveNumber(form, "targetDuration"),
-      lyricsMarkdown: requiredField(form, "lyricsMarkdown"),
-      audioAssetId: audioAsset.id,
-      mainComposition: requiredField(form, "mainComposition"),
-      videoSize: requiredField(form, "videoSize"),
-    });
-    redirect(response, `/projects/${encodeURIComponent(imported.projectId)}`);
+    sendHtml(response, renderProjectsPage(await listSmallProjectIds()));
     return;
   }
 
-  const runMatch = url.pathname.match(/^\/projects\/([^/]+)\/run-preview$/);
+  const runMatch = url.pathname.match(/^\/api\/projects\/([^/]+)\/video-html\/run$/);
   if (request.method === "POST" && runMatch) {
-    const projectId = decodeURIComponent(runMatch[1]);
-    await runPostMinimaxToSceneApproval(projectPathForId(projectId));
-    redirect(response, `/projects/${encodeURIComponent(projectId)}`);
+    const smallProjectId = decodeURIComponent(runMatch[1]);
+    const result = await runHtmlVideoWorkflow(smallProjectId, { storageRoot });
+    sendJson(response, {
+      smallProjectId: result.smallProjectId,
+      preview: result.preview,
+      renderManifest: result.renderManifest,
+    });
     return;
   }
 
-  const approveSceneMatch = url.pathname.match(/^\/projects\/([^/]+)\/approve-scene$/);
-  if (request.method === "POST" && approveSceneMatch) {
-    const projectId = decodeURIComponent(approveSceneMatch[1]);
-    const projectPath = projectPathForId(projectId);
-    await runApprovedSceneToPreview(projectPath);
-    redirect(response, `/projects/${encodeURIComponent(projectId)}`);
+  const previewMatch = url.pathname.match(/^\/api\/projects\/([^/]+)\/video-html\/preview$/);
+  if (request.method === "GET" && previewMatch) {
+    const smallProjectId = decodeURIComponent(previewMatch[1]);
+    sendJson(response, await loadHtmlVideoPreviewModel(resolveSmallProjectPaths(storageRoot, smallProjectId)));
     return;
   }
 
-  const approvePreviewMatch = url.pathname.match(/^\/projects\/([^/]+)\/approve-preview$/);
-  if (request.method === "POST" && approvePreviewMatch) {
-    const projectId = decodeURIComponent(approvePreviewMatch[1]);
-    await approvePreview(projectPathForId(projectId));
-    redirect(response, `/projects/${encodeURIComponent(projectId)}`);
-    return;
-  }
-
-  const storyboardImportMatch = url.pathname.match(/^\/projects\/([^/]+)\/storyboard\/import$/);
-  if (request.method === "POST" && storyboardImportMatch) {
-    const projectId = decodeURIComponent(storyboardImportMatch[1]);
-    const projectPath = projectPathForId(projectId);
-    try {
-      await importPastedStoryboard(projectPath, await readBody(request));
-      redirect(response, `/projects/${encodeURIComponent(projectId)}`);
-    } catch (error) {
-      response.writeHead(400, { "content-type": "text/html; charset=utf-8" });
-      response.end(renderProjectWorkspace(await loadProjectSummary(projectPath, request.headers.host), {
-        error: error instanceof Error ? error.message : String(error),
-      }));
-    }
-    return;
-  }
-
-  const startHyperframesUiMatch = url.pathname.match(/^\/projects\/([^/]+)\/hyperframes-ui\/start$/);
-  if (request.method === "POST" && startHyperframesUiMatch) {
-    const projectId = decodeURIComponent(startHyperframesUiMatch[1]);
-    const projectPath = projectPathForId(projectId);
-    try {
-      await startProjectHyperframesUi({
-        projectPath,
-        projectId,
-        requestHost: request.headers.host,
-      });
-      redirect(response, `/projects/${encodeURIComponent(projectId)}/hyperframes`);
-    } catch (error) {
-      response.writeHead(400, { "content-type": "text/html; charset=utf-8" });
-      response.end(renderHyperframesPage(await loadProjectSummary(projectPath, request.headers.host), {
-        error: error instanceof Error ? error.message : String(error),
-      }));
-    }
-    return;
-  }
-
-  const hyperframesUiStatusMatch = url.pathname.match(/^\/projects\/([^/]+)\/hyperframes-ui\/status$/);
-  if (request.method === "GET" && hyperframesUiStatusMatch) {
-    const projectId = decodeURIComponent(hyperframesUiStatusMatch[1]);
-    sendJson(response, await loadHyperframesUiStatus(projectPathForId(projectId)));
-    return;
-  }
-
-  const hyperframesPageMatch = url.pathname.match(/^\/projects\/([^/]+)\/hyperframes$/);
-  if (request.method === "GET" && hyperframesPageMatch) {
-    const projectId = decodeURIComponent(hyperframesPageMatch[1]);
-    sendHtml(response, renderHyperframesPage(await loadProjectSummary(projectPathForId(projectId), request.headers.host)));
+  const frameMatch = url.pathname.match(/^\/preview\/([^/]+)\/frames\/([^/]+)$/);
+  if (request.method === "GET" && frameMatch) {
+    const smallProjectId = decodeURIComponent(frameMatch[1]);
+    const filename = decodeURIComponent(frameMatch[2]);
+    await sendFrame(response, resolveSmallProjectPaths(storageRoot, smallProjectId), filename);
     return;
   }
 
   const downloadMatch = url.pathname.match(/^\/projects\/([^/]+)\/download$/);
   if (request.method === "GET" && downloadMatch) {
-    const projectId = decodeURIComponent(downloadMatch[1]);
+    const smallProjectId = decodeURIComponent(downloadMatch[1]);
     const relativePath = url.searchParams.get("path") ?? "";
-    await sendDownload(response, projectPathForId(projectId), relativePath);
-    return;
-  }
-
-  const deleteProjectMatch = url.pathname.match(/^\/projects\/([^/]+)\/delete$/);
-  if (request.method === "POST" && deleteProjectMatch) {
-    const projectId = decodeURIComponent(deleteProjectMatch[1]);
-    await deleteProject(projectPathForId(projectId));
-    redirect(response, "/projects");
-    return;
-  }
-
-  const projectMatch = url.pathname.match(/^\/projects\/([^/]+)$/);
-  if (request.method === "GET" && projectMatch) {
-    const projectId = decodeURIComponent(projectMatch[1]);
-    sendHtml(response, renderProjectWorkspace(await loadProjectSummary(projectPathForId(projectId), request.headers.host)));
+    await sendDownload(response, resolveSmallProjectPaths(storageRoot, smallProjectId).projectRoot, relativePath);
     return;
   }
 
@@ -187,11 +82,29 @@ async function route(request: IncomingMessage, response: ServerResponse): Promis
   response.end(renderNotFound());
 }
 
-async function runPostMinimaxToSceneApproval(projectPath: string): Promise<void> {
-  await lockAcceptedMusic(projectPath);
-  await generateBeatLock(projectPath);
-  await generateSectionMap(projectPath);
-  await generateScenePlans(projectPath);
+async function listSmallProjectIds(): Promise<string[]> {
+  try {
+    const entries = await readdir(storageRoot, { withFileTypes: true });
+    return entries
+      .filter((entry) => entry.isDirectory())
+      .map((entry) => entry.name)
+      .filter((name) => /^[a-zA-Z0-9_-]+$/.test(name))
+      .sort();
+  } catch {
+    return [];
+  }
+}
+
+async function sendFrame(response: ServerResponse, paths: ReturnType<typeof resolveSmallProjectPaths>, filename: string): Promise<void> {
+  let framePath: string;
+  try {
+    framePath = resolvePreviewFramePath(paths, filename);
+  } catch {
+    response.writeHead(400, { "content-type": "text/plain; charset=utf-8" });
+    response.end("Invalid preview frame filename.");
+    return;
+  }
+  await sendFile(response, framePath, "text/html; charset=utf-8");
 }
 
 async function sendDownload(response: ServerResponse, projectPath: string, relativePath: string): Promise<void> {
@@ -207,31 +120,39 @@ async function sendDownload(response: ServerResponse, projectPath: string, relat
     response.end("Invalid download path.");
     return;
   }
+  await sendFile(response, absolutePath, contentType(relativePath));
+}
+
+async function sendFile(response: ServerResponse, absolutePath: string, type: string): Promise<void> {
   try {
     const fileStat = await stat(absolutePath);
     if (!fileStat.isFile()) {
       response.writeHead(404, { "content-type": "text/plain; charset=utf-8" });
-      response.end("Download not found.");
+      response.end("File not found.");
       return;
     }
   } catch {
     response.writeHead(404, { "content-type": "text/plain; charset=utf-8" });
-    response.end("Download not found.");
+    response.end("File not found.");
     return;
   }
+  response.writeHead(200, { "content-type": type });
+  createReadStream(absolutePath).pipe(response);
+}
 
-  response.writeHead(200, {
-    "content-type": contentType(relativePath),
-    "content-disposition": `attachment; filename="${path.basename(relativePath)}"`,
-  });
-  const stream = createReadStream(absolutePath);
-  stream.on("error", () => {
-    if (!response.headersSent) {
-      response.writeHead(500, { "content-type": "text/plain; charset=utf-8" });
-    }
-    response.end("Download failed.");
-  });
-  stream.pipe(response);
+function renderProjectsPage(projectIds: string[]): string {
+  const rows = projectIds.length === 0
+    ? "<li>No html-video projects yet.</li>"
+    : projectIds.map((id) => `<li><code>${escapeHtml(id)}</code> <a href="/api/projects/${encodeURIComponent(id)}/video-html/preview">preview json</a></li>`).join("");
+  return layout("Qivance html-video", `<h1>Qivance html-video</h1><ul>${rows}</ul>`);
+}
+
+function renderNotFound(): string {
+  return layout("Not found", "<h1>Not found</h1>");
+}
+
+function layout(title: string, body: string): string {
+  return `<!doctype html><html><head><meta charset="utf-8"><title>${escapeHtml(title)}</title><style>body{font-family:system-ui,sans-serif;margin:40px;line-height:1.5}code{background:#f3f4f6;padding:2px 4px}</style></head><body>${body}</body></html>`;
 }
 
 function sendHtml(response: ServerResponse, html: string): void {
@@ -249,50 +170,18 @@ function redirect(response: ServerResponse, location: string): void {
   response.end();
 }
 
-async function readBody(request: IncomingMessage): Promise<Buffer> {
-  const chunks = [];
-  for await (const chunk of request) {
-    chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
-  }
-  return Buffer.concat(chunks);
-}
-
-function requiredField(form: MultipartForm, name: string): string {
-  const value = form.fields.get(name)?.trim();
-  if (!value) {
-    throw new Error(`Missing form field ${name}`);
-  }
-  return value;
-}
-
-function requiredPositiveNumber(form: MultipartForm, name: string): number {
-  const value = Number(requiredField(form, name));
-  if (!Number.isFinite(value) || value <= 0) {
-    throw new Error(`Invalid numeric form field ${name}`);
-  }
-  return value;
-}
-
-function requiredFile(form: MultipartForm, name: string): { filename: string; mimeType: string; data: Buffer } {
-  const value = form.files.get(name);
-  if (!value || value.data.byteLength === 0) {
-    throw new Error(`Missing form file ${name}`);
-  }
-  return value;
-}
-
-function projectPathForId(projectId: string): string {
-  if (!/^project_[a-zA-Z0-9_-]+$/.test(projectId)) {
-    throw new Error("Invalid project id.");
-  }
-  return path.join(storageRoot, projectId);
-}
-
 function contentType(relativePath: string): string {
-  if (relativePath.endsWith(".mp4")) return "video/mp4";
-  if (relativePath.endsWith(".wav")) return "audio/wav";
   if (relativePath.endsWith(".json")) return "application/json; charset=utf-8";
-  if (relativePath.endsWith(".md")) return "text/markdown; charset=utf-8";
-  if (relativePath.endsWith(".jpg") || relativePath.endsWith(".jpeg")) return "image/jpeg";
+  if (relativePath.endsWith(".mp4")) return "video/mp4";
+  if (relativePath.endsWith(".html")) return "text/html; charset=utf-8";
+  if (relativePath.endsWith(".wav")) return "audio/wav";
   return "application/octet-stream";
+}
+
+function escapeHtml(value: string): string {
+  return value
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;");
 }

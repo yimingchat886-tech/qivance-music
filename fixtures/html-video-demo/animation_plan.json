@@ -1,0 +1,28 @@
+{
+  "schemaVersion": 1,
+  "smallProjectId": "demo_html_video_001",
+  "title": "RAG Rap Demo",
+  "category": "ai_concept",
+  "targetDurationSec": 4,
+  "fps": 30,
+  "resolution": { "width": 1080, "height": 1920 },
+  "aspectRatio": "9:16",
+  "mood": "cyber rap",
+  "synopsis": "A short rap teaching hook about RAG.",
+  "scenes": [
+    {
+      "id": "scene_001_hook",
+      "order": 0,
+      "sectionId": "sec_hook",
+      "startSec": 0,
+      "endSec": 4,
+      "durationSec": 4,
+      "frameIntent": "kinetic-rap-hook",
+      "headline": "RAG checks facts before it raps",
+      "bodyLines": ["Retrieve", "Augment", "Generate"],
+      "captionMode": "word_highlight",
+      "visualDirectives": ["large kinetic text", "high contrast cyber card"],
+      "beatSync": { "intensity": 0.85, "hitPointsSec": [0.5, 1.5, 2.5, 3.5] }
+    }
+  ]
+}

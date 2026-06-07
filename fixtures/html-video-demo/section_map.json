@@ -1,0 +1,15 @@
+{
+  "schemaVersion": 1,
+  "audioTakeId": "take_demo_001",
+  "durationSec": 4,
+  "sections": [
+    {
+      "id": "sec_hook",
+      "type": "hook",
+      "startSec": 0,
+      "endSec": 4,
+      "energy": "high",
+      "lyricLines": ["line_001"]
+    }
+  ]
+}
