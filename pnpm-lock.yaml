@@ -17,6 +17,9 @@ importers:
       '@html-video/core':
         specifier: workspace:*
         version: link:vendor/html-video/packages/core
+      '@html-video/runtime':
+        specifier: workspace:*
+        version: link:vendor/html-video/packages/runtime
     devDependencies:
       '@types/node':
         specifier: ^24.0.0

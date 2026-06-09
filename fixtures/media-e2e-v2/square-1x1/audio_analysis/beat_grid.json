@@ -1,0 +1,265 @@
+{
+  "schema_version": 1,
+  "duration_sec": 32.0,
+  "tempo_bpm": 100.0,
+  "tempo_candidates": [
+    100.0
+  ],
+  "beats": [
+    {
+      "index": 0,
+      "time_sec": 0.6,
+      "confidence": 1.0
+    },
+    {
+      "index": 1,
+      "time_sec": 1.1,
+      "confidence": 1.0
+    },
+    {
+      "index": 2,
+      "time_sec": 1.7,
+      "confidence": 1.0
+    },
+    {
+      "index": 3,
+      "time_sec": 2.3,
+      "confidence": 1.0
+    },
+    {
+      "index": 4,
+      "time_sec": 2.9,
+      "confidence": 1.0
+    },
+    {
+      "index": 5,
+      "time_sec": 3.6,
+      "confidence": 1.0
+    },
+    {
+      "index": 6,
+      "time_sec": 4.2,
+      "confidence": 1.0
+    },
+    {
+      "index": 7,
+      "time_sec": 4.8,
+      "confidence": 1.0
+    },
+    {
+      "index": 8,
+      "time_sec": 5.4,
+      "confidence": 1.0
+    },
+    {
+      "index": 9,
+      "time_sec": 6.0,
+      "confidence": 1.0
+    },
+    {
+      "index": 10,
+      "time_sec": 6.7,
+      "confidence": 1.0
+    },
+    {
+      "index": 11,
+      "time_sec": 7.3,
+      "confidence": 1.0
+    },
+    {
+      "index": 12,
+      "time_sec": 7.9,
+      "confidence": 1.0
+    },
+    {
+      "index": 13,
+      "time_sec": 8.6,
+      "confidence": 1.0
+    },
+    {
+      "index": 14,
+      "time_sec": 9.2,
+      "confidence": 1.0
+    },
+    {
+      "index": 15,
+      "time_sec": 9.8,
+      "confidence": 1.0
+    },
+    {
+      "index": 16,
+      "time_sec": 10.4,
+      "confidence": 1.0
+    },
+    {
+      "index": 17,
+      "time_sec": 11.0,
+      "confidence": 1.0
+    },
+    {
+      "index": 18,
+      "time_sec": 11.6,
+      "confidence": 1.0
+    },
+    {
+      "index": 19,
+      "time_sec": 12.3,
+      "confidence": 1.0
+    },
+    {
+      "index": 20,
+      "time_sec": 12.9,
+      "confidence": 1.0
+    },
+    {
+      "index": 21,
+      "time_sec": 13.6,
+      "confidence": 1.0
+    },
+    {
+      "index": 22,
+      "time_sec": 14.2,
+      "confidence": 1.0
+    },
+    {
+      "index": 23,
+      "time_sec": 14.8,
+      "confidence": 1.0
+    },
+    {
+      "index": 24,
+      "time_sec": 15.4,
+      "confidence": 1.0
+    },
+    {
+      "index": 25,
+      "time_sec": 16.0,
+      "confidence": 1.0
+    },
+    {
+      "index": 26,
+      "time_sec": 16.7,
+      "confidence": 1.0
+    },
+    {
+      "index": 27,
+      "time_sec": 17.3,
+      "confidence": 1.0
+    },
+    {
+      "index": 28,
+      "time_sec": 17.9,
+      "confidence": 1.0
+    },
+    {
+      "index": 29,
+      "time_sec": 18.6,
+      "confidence": 1.0
+    },
+    {
+      "index": 30,
+      "time_sec": 19.2,
+      "confidence": 1.0
+    },
+    {
+      "index": 31,
+      "time_sec": 19.8,
+      "confidence": 1.0
+    },
+    {
+      "index": 32,
+      "time_sec": 20.4,
+      "confidence": 1.0
+    },
+    {
+      "index": 33,
+      "time_sec": 21.1,
+      "confidence": 1.0
+    },
+    {
+      "index": 34,
+      "time_sec": 21.7,
+      "confidence": 1.0
+    },
+    {
+      "index": 35,
+      "time_sec": 22.3,
+      "confidence": 1.0
+    },
+    {
+      "index": 36,
+      "time_sec": 22.9,
+      "confidence": 1.0
+    },
+    {
+      "index": 37,
+      "time_sec": 23.5,
+      "confidence": 1.0
+    },
+    {
+      "index": 38,
+      "time_sec": 24.2,
+      "confidence": 1.0
+    },
+    {
+      "index": 39,
+      "time_sec": 24.8,
+      "confidence": 1.0
+    },
+    {
+      "index": 40,
+      "time_sec": 25.4,
+      "confidence": 1.0
+    },
+    {
+      "index": 41,
+      "time_sec": 26.1,
+      "confidence": 1.0
+    },
+    {
+      "index": 42,
+      "time_sec": 26.7,
+      "confidence": 1.0
+    },
+    {
+      "index": 43,
+      "time_sec": 27.3,
+      "confidence": 1.0
+    },
+    {
+      "index": 44,
+      "time_sec": 27.9,
+      "confidence": 1.0
+    },
+    {
+      "index": 45,
+      "time_sec": 28.5,
+      "confidence": 1.0
+    },
+    {
+      "index": 46,
+      "time_sec": 29.2,
+      "confidence": 1.0
+    },
+    {
+      "index": 47,
+      "time_sec": 29.8,
+      "confidence": 1.0
+    },
+    {
+      "index": 48,
+      "time_sec": 30.4,
+      "confidence": 1.0
+    },
+    {
+      "index": 49,
+      "time_sec": 31.0,
+      "confidence": 1.0
+    },
+    {
+      "index": 50,
+      "time_sec": 31.5,
+      "confidence": 1.0
+    }
+  ]
+}

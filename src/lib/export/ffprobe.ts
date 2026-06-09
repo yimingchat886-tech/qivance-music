@@ -7,12 +7,16 @@ export type MediaProbe = {
   durationSec: number;
   hasVideoStream: boolean;
   hasAudioStream: boolean;
+  videoStreamCount: number;
+  audioStreamCount: number;
   video?: {
+    codecName: string | null;
     width: number;
     height: number;
     fps: number;
   };
   audio?: {
+    codecName: string | null;
     durationSec: number | null;
   };
 };
@@ -22,7 +26,7 @@ export async function ffprobe(filePath: string): Promise<MediaProbe> {
     "-v",
     "error",
     "-show_entries",
-    "format=duration:stream=codec_type,width,height,r_frame_rate,duration",
+    "format=duration:stream=codec_type,codec_name,width,height,r_frame_rate,duration",
     "-of",
     "json",
     filePath,
@@ -36,14 +40,19 @@ export function parseFfprobeJson(raw: string): MediaProbe {
     streams?: Array<Record<string, unknown>>;
   };
   const streams = parsed.streams ?? [];
-  const videoStream = streams.find((stream) => stream.codec_type === "video");
-  const audioStream = streams.find((stream) => stream.codec_type === "audio");
+  const videoStreams = streams.filter((stream) => stream.codec_type === "video");
+  const audioStreams = streams.filter((stream) => stream.codec_type === "audio");
+  const videoStream = videoStreams[0];
+  const audioStream = audioStreams[0];
   return {
     durationSec: round(Number(parsed.format?.duration ?? 0)),
     hasVideoStream: Boolean(videoStream),
     hasAudioStream: Boolean(audioStream),
+    videoStreamCount: videoStreams.length,
+    audioStreamCount: audioStreams.length,
     ...(videoStream ? {
       video: {
+        codecName: stringOrNull(videoStream.codec_name),
         width: Number(videoStream.width ?? 0),
         height: Number(videoStream.height ?? 0),
         fps: parseFps(String(videoStream.r_frame_rate ?? "0/1")),
@@ -51,10 +60,15 @@ export function parseFfprobeJson(raw: string): MediaProbe {
     } : {}),
     ...(audioStream ? {
       audio: {
+        codecName: stringOrNull(audioStream.codec_name),
         durationSec: audioStream.duration === undefined ? null : round(Number(audioStream.duration)),
       },
     } : {}),
   };
+}
+
+function stringOrNull(value: unknown): string | null {
+  return typeof value === "string" && value.length > 0 ? value : null;
 }
 
 function parseFps(value: string): number {
