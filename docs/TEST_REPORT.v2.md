@@ -42,3 +42,32 @@ Unproven paths: running WhisperX fresh inside qivance-music instead of using pro
 - Real Codex `image_gen` invocation is not wired into `codexImageGenAdapter` yet.
 - html-video runtime bridge is implemented and detects local `codex`, `claude`, and `hermes`, but the V2 workflow does not yet call it to author frames.
 - Real visual render, final MP3-to-AAC mux, final ffprobe QA, static Preview smoke, and three-ratio local full E2E are still unproven.
+
+
+## 2026-06-10 Real Orchestrator Progress
+
+Scope: solidify Python env, add fresh WhisperX/librosa runner contract, implement real 15-step runMediaE2EWorkflow fail-fast orchestrator, and run available local E2E gates.
+
+Commands and evidence:
+
+- /usr/bin/node --experimental-strip-types --test tests/python-env-contract.test.ts tests/whisperx-runner.test.ts tests/codex-image-gen-external-command.test.ts: passed, 6 tests.
+- /usr/bin/node --experimental-strip-types --test tests/frame-output-contract-validator.test.ts tests/media-qa.test.ts: passed, 4 tests.
+- /usr/bin/node --experimental-strip-types --test tests/whisperx-runner.test.ts: passed, 3 tests including timeout fail-fast.
+- /usr/bin/node node_modules/.pnpm/typescript@5.9.3/node_modules/typescript/lib/tsc.js -p tsconfig.json --noEmit: passed.
+- .venv/bin/python import check: librosa 0.11.0 and torch CUDA true. Local .venv is a gitignored symlink to the known-good project-rap env because copying the 7.6G env was not practical.
+- /usr/bin/node --experimental-strip-types scripts/e2e-media-v2.ts --fixture portrait-9x16: fixture, librosa, fresh WhisperX, and section_map passed; failed at generate_background_images because QIVANCE_CODEX_IMAGE_GEN_CMD is not configured.
+- /usr/bin/node --experimental-strip-types scripts/e2e-media-v2.ts --fixture landscape-16x9: same result; failed at generate_background_images because QIVANCE_CODEX_IMAGE_GEN_CMD is not configured.
+- /usr/bin/node --experimental-strip-types scripts/e2e-media-v2.ts --fixture square-1x1: same result; failed at generate_background_images because QIVANCE_CODEX_IMAGE_GEN_CMD is not configured.
+
+Fresh WhisperX evidence:
+
+- projects/media_e2e_v2_portrait_9x16/timing/alignment_report.json: status passed, backend whisperx, whisperx 3.8.6, librosa 0.11.0, torch 2.8.0+cu128, CUDA 12.8, GPU NVIDIA GeForce RTX 4070 SUPER, word coverage 1.0.
+- projects/media_e2e_v2_landscape_16x9/timing/alignment_report.json: produced by fresh workflow before image_gen gate.
+- projects/media_e2e_v2_square_1x1/timing/alignment_report.json: produced by fresh workflow before image_gen gate.
+
+Current blocker:
+
+- Real Codex image_gen external command is not available. The adapter now intentionally fails with: QIVANCE_CODEX_IMAGE_GEN_CMD is required for real Codex image_gen E2E execution.
+- Because image generation is a hard V2 gate and every fixture requires at least one generated background scene, html-video runtime/frame generation, static preview smoke, visual_silent.mp4 render, AAC mux, ffprobe final QA, passed render_manifest.json, and full three-ratio local E2E remain unexecuted.
+
+Conclusion: V2 is materially advanced but not complete. The missing boundary is no longer librosa, WhisperX, or workflow orchestration; it is the absence of a real external Codex image_gen command.

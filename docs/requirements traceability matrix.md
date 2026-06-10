@@ -143,3 +143,29 @@ Updated V2 evidence status:
 | Mux/export | Qivance muxes locked MP3 to AAC final output | mux command builder and ffprobe codec/stream parser tests passed | Run real visual render + final mux E2E |
 | Manifest/report | Manifest is machine-readable evidence; TEST_REPORT is human summary | V2 manifest skeleton and `docs/TEST_REPORT.v2.md` added | Populate manifest with real E2E artifacts |
 | Preview revision | Out of V2 | no user modification iteration added | Move to later version |
+
+
+## V2 Media E2E Recalibration - 2026-06-10
+
+Branch: codex/v2-media-e2e
+TEST_REPORT source: docs/TEST_REPORT.v2.md
+
+Updated implementation evidence:
+
+| Area | 2026-06-10 status | Evidence | Next decision |
+|---|---|---|---|
+| Python env | Partially implemented | requirements/media-e2e-python.txt records pinned media deps; local .venv is gitignored and points to the verified project-rap env; import check shows librosa 0.11.0 and CUDA true | For portable CI/dev, replace the local symlink with a documented setup command or checked setup script |
+| librosa runner | Implemented for local E2E gate | Three ratios passed analyze_audio_with_librosa checkpoints and produced beat_grid/onset_events/energy_curve under projects/media_e2e_v2_* | Keep as music evidence layer; do not replace with WhisperX |
+| fresh WhisperX | Implemented for local E2E gate | Three ratios reached image_gen gate after fresh alignment; portrait report proves whisperx 3.8.6, torch CUDA, GPU, hashes, and word coverage 1.0 | Keep forced-alignment script and tighten metrics/schema tests if production samples become more varied |
+| image_gen external command | Contract implemented, real command missing | codex image_gen adapter requires QIVANCE_CODEX_IMAGE_GEN_CMD and fails fast when absent | Provide a real command/API wrapper for Codex image_gen before full E2E can pass |
+| 15-step orchestrator | Implemented as fail-fast real workflow | runMediaE2EWorkflow now executes fixture, librosa, WhisperX, section_map, image_gen gate, html-video/runtime/render/mux/ffprobe/manifest steps in order | Continue after real image_gen command is available |
+| html-video runtime/frame/render path | Wired after image gate but unexecuted | Code path calls ensureHtmlVideoWorkspace, runHtmlVideoAgentRuntime, frame validator, preview smoke, renderHtmlVideoVisual, muxLockedAudio, ffprobe | Needs real image generation outputs first; then run local full E2E |
+| render_manifest | Wired but no passed runtime manifest yet | Manifest writer in workflow includes step, audio, word alignment, image generation, html-video, render, mux, probe evidence | Cannot mark passed until visual/final outputs exist |
+
+Requirement status changes:
+
+- R17, R18, R19: move from seeded or unproven to partially implemented with fresh local WhisperX/librosa evidence.
+- R31, R47, R50, R52, R53: remain partially implemented because execution is blocked before html-video runtime/render/ffprobe final gates.
+- R89-R94: image generation boundary is partially implemented at adapter/lock-gate contract level, but not completed because the real Codex image_gen command is absent.
+
+Current hard blocker: QIVANCE_CODEX_IMAGE_GEN_CMD is not configured. V2 full local E2E cannot pass by design until this real command is provided.

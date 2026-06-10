@@ -6,3 +6,8 @@ projects/
 tmp/
 *.log
 
+.venv/
+.venv
+.cache/
+__pycache__/
+scripts/python/__pycache__/
