@@ -58,6 +58,8 @@ Commands and evidence:
 - /usr/bin/node --experimental-strip-types scripts/e2e-media-v2.ts --fixture portrait-9x16: fixture, librosa, fresh WhisperX, and section_map passed; failed at generate_background_images because QIVANCE_CODEX_IMAGE_GEN_CMD is not configured.
 - /usr/bin/node --experimental-strip-types scripts/e2e-media-v2.ts --fixture landscape-16x9: same result; failed at generate_background_images because QIVANCE_CODEX_IMAGE_GEN_CMD is not configured.
 - /usr/bin/node --experimental-strip-types scripts/e2e-media-v2.ts --fixture square-1x1: same result; failed at generate_background_images because QIVANCE_CODEX_IMAGE_GEN_CMD is not configured.
+- /home/jym/.nvm/versions/node/v24.14.0/bin/codex --help: no stable image_gen subcommand is exposed.
+- /home/jym/.nvm/versions/node/v24.14.0/bin/codex exec --help: no stable non-interactive image generation/file-output contract is exposed.
 
 Fresh WhisperX evidence:
 
@@ -68,6 +70,7 @@ Fresh WhisperX evidence:
 Current blocker:
 
 - Real Codex image_gen external command is not available. The adapter now intentionally fails with: QIVANCE_CODEX_IMAGE_GEN_CMD is required for real Codex image_gen E2E execution.
+- The installed Codex CLI exposes exec/review/mcp/plugin/app-server style commands, but not a dedicated image_gen command; therefore V2 cannot honestly set QIVANCE_CODEX_IMAGE_GEN_CMD from the currently available CLI surface.
 - Because image generation is a hard V2 gate and every fixture requires at least one generated background scene, html-video runtime/frame generation, static preview smoke, visual_silent.mp4 render, AAC mux, ffprobe final QA, passed render_manifest.json, and full three-ratio local E2E remain unexecuted.
 
 Conclusion: V2 is materially advanced but not complete. The missing boundary is no longer librosa, WhisperX, or workflow orchestration; it is the absence of a real external Codex image_gen command.
