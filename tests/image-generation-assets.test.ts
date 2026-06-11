@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { buildLockedImageAssets } from "../src/lib/image-generation/image-assets.ts";
+import { buildLockedImageAssets, validateImageAssetReviewDecisionFile } from "../src/lib/image-generation/image-assets.ts";
 
 test("writes only locked image candidates into image assets", () => {
   const manifest = buildLockedImageAssets({
@@ -29,4 +29,38 @@ test("writes only locked image candidates into image assets", () => {
 
   assert.equal(manifest.assets.length, 1);
   assert.equal(manifest.assets[0]?.asset_id, "cand_001");
+});
+
+test("validates file-based image review decisions", () => {
+  const result = validateImageAssetReviewDecisionFile({
+    smallProjectId: "media_e2e_v2_portrait_9x16",
+    candidateIds: ["cand_001", "cand_002"],
+    review: {
+      schema_version: 1,
+      small_project_id: "media_e2e_v2_portrait_9x16",
+      decisions: [
+        { candidate_id: "cand_001", status: "locked", reason: "best fit", decided_by: "reviewer" },
+        { candidate_id: "cand_002", status: "rejected", reason: "too busy" },
+      ],
+    },
+  });
+
+  assert.equal(result.ok, true);
+  assert.deepEqual(result.decisions.map((decision) => decision.status), ["locked", "rejected"]);
+  assert.equal(result.decisions[0]?.decidedBy, "reviewer");
+});
+
+test("rejects review decisions for unknown generated candidates", () => {
+  const result = validateImageAssetReviewDecisionFile({
+    smallProjectId: "media_e2e_v2_portrait_9x16",
+    candidateIds: ["cand_001"],
+    review: {
+      schema_version: 1,
+      small_project_id: "media_e2e_v2_portrait_9x16",
+      decisions: [{ candidate_id: "cand_999", status: "locked" }],
+    },
+  });
+
+  assert.equal(result.ok, false);
+  assert.match(result.issues.join("\n"), /unknown candidate cand_999/);
 });

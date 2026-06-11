@@ -5,8 +5,13 @@ export type MediaE2EWorkflowOptions = {
   forceStep?: string[];
   skipPreviewSmoke?: boolean;
   requireGpu?: boolean;
+  allowCachedImagegen?: boolean;
+  allowFallbackFrames?: boolean;
+  allowAutoLockImageAssets?: boolean;
+  allowCpuWhisperXDiagnostic?: boolean;
   fixtureRatio?: MediaE2ERatio;
   reportPath?: string;
+  reviewDecisionPath?: string;
 };
 
 export type MediaE2EValidationResult = {

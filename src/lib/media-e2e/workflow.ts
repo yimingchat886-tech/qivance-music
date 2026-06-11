@@ -7,11 +7,12 @@ import { ProjectStore, type Project } from "@html-video/core";
 import { validateAudioAnalysisArtifacts } from "../audio-analysis/librosa-runner.ts";
 import type { BeatGrid, EnergyCurve, OnsetEvents } from "../audio-analysis/types.ts";
 import { ffprobe, type MediaProbe } from "../export/ffprobe.ts";
+import { validateRenderManifestV2 } from "../export/render-manifest-v2.ts";
 import { validateVisualAndFinalMedia } from "../export/media-qa.ts";
 import { muxLockedAudio } from "../export/mux-locked-audio.ts";
 import { codexImageGenAdapter } from "../image-generation/codex-image-gen-adapter.ts";
 import { readCachedImageGenerationResult } from "../image-generation/cached-image-result.ts";
-import { buildLockedImageAssets } from "../image-generation/image-assets.ts";
+import { buildLockedImageAssets, validateImageAssetReviewDecisionFile, type ImageAssetReviewDecision, type ImageDecision } from "../image-generation/image-assets.ts";
 import type { ImageGenerationRequest, ImageGenerationResult } from "../image-generation/types.ts";
 import { resolveSmallProjectPaths, type SmallProjectPaths } from "../project-core/paths.ts";
 import { buildSectionMapFromEvidence } from "../section-map/section-map-builder.ts";
@@ -24,7 +25,7 @@ import { runHtmlVideoAgentRuntime } from "../video-html/html-video-agent-runtime
 import { loadHtmlVideoPreviewModel, resolvePreviewFramePath } from "../video-html/preview-model.ts";
 import { renderHtmlVideoVisual } from "../video-html/render-html-video.ts";
 import { assertAllowedPathChanges, diffSnapshots, snapshotFiles } from "../video-html/path-gate.ts";
-import { resolveMediaE2EPythonEnv } from "./python-env.ts";
+import { resolveMediaE2EPythonEnv, validateWhisperXPreflight, type WhisperXPreflightResult } from "./python-env.ts";
 import { appendMediaE2ETestReportEvidence } from "./test-report.ts";
 import { writeContractFallbackFrames } from "./contract-frame-fallback.ts";
 import {
@@ -69,6 +70,26 @@ export type MediaE2EWorkflowResult = {
   status: "passed";
 };
 
+export function validateMediaE2EProductionGates(input: {
+  cachedImagegenRequests: string[];
+  fallbackFramePaths: string[];
+  htmlVideoRuntimeExitCode: number | null;
+  allowCachedImagegen?: boolean;
+  allowFallbackFrames?: boolean;
+}): { ok: boolean; issues: string[] } {
+  const issues: string[] = [];
+  if (input.cachedImagegenRequests.length > 0 && !input.allowCachedImagegen) {
+    issues.push(`cached imagegen evidence is not allowed in production-strict E2E: ${input.cachedImagegenRequests.join(", ")}`);
+  }
+  if ((input.htmlVideoRuntimeExitCode !== null && input.htmlVideoRuntimeExitCode !== 0) && !input.allowFallbackFrames) {
+    issues.push("AI-authored html-video frames require a clean runtime exit in production-strict E2E");
+  }
+  if (input.fallbackFramePaths.length > 0 && !input.allowFallbackFrames) {
+    issues.push(`fallback frame evidence is not allowed in production-strict E2E: ${input.fallbackFramePaths.join(", ")}`);
+  }
+  return { ok: issues.length === 0, issues };
+}
+
 export async function runMediaE2EWorkflowWithInjectedSteps(input: { steps: InjectedMediaE2ESteps }): Promise<void> {
   for (const step of MEDIA_E2E_WORKFLOW_STEPS) {
     await input.steps[step]();
@@ -102,6 +123,12 @@ export async function runMediaE2EWorkflow(
     visualProbe: null,
     finalProbe: null,
     diagnostics: [],
+    cachedImagegenRequests: [],
+    fallbackFramePaths: [],
+    htmlVideoRuntimeExitCode: null,
+    reviewDecisionSource: null,
+    reviewDecisionPath: null,
+    whisperxPreflight: null,
   };
 
   await runStep(context, "validate_fixture_bundle", async () => {
@@ -138,6 +165,14 @@ export async function runMediaE2EWorkflow(
   });
 
   await runStep(context, "align_words_with_whisperx", async () => {
+    context.whisperxPreflight = validateWhisperXPreflight({
+      pythonEnv: context.pythonEnv,
+      allowCpuDiagnostic: options.allowCpuWhisperXDiagnostic,
+      requireGpu: options.requireGpu ?? context.pythonEnv.whisperx.requireGpu,
+    });
+    context.diagnostics.push(...context.whisperxPreflight.diagnostics);
+    if (!context.whisperxPreflight.ok) throw new Error(context.whisperxPreflight.issues.join("; "));
+
     await runWhisperXAlignment({
       pythonExecutable: context.pythonEnv.pythonExecutable,
       scriptPath: path.resolve("scripts/python/align-lyrics-whisperx.py"),
@@ -173,27 +208,53 @@ export async function runMediaE2EWorkflow(
       const imageRequest = toImageGenerationRequest(request, outputDir);
       const cached = await readCachedImageGenerationResult(imageRequest);
       const result = cached ?? await codexImageGenAdapter.generateImageCandidates(imageRequest);
-      if (cached) context.diagnostics.push(`reused cached image candidates for ${request.request_id}`);
+      if (cached) {
+        context.cachedImagegenRequests.push(request.request_id);
+        context.diagnostics.push(`reused cached image candidates for ${request.request_id}`);
+      }
       if (result.candidates.length === 0) throw new Error(`image_gen returned no candidates: ${request.request_id}`);
       context.imageResults.push(result);
     }
+    await writeJson(imageGenerationResultsPath(paths), {
+      schema_version: 1,
+      small_project_id: projectId,
+      results: context.imageResults,
+    });
+    const gate = validateMediaE2EProductionGates({
+      cachedImagegenRequests: context.cachedImagegenRequests,
+      fallbackFramePaths: [],
+      htmlVideoRuntimeExitCode: 0,
+      allowCachedImagegen: options.allowCachedImagegen,
+      allowFallbackFrames: options.allowFallbackFrames,
+    });
+    if (!gate.ok) throw new Error(gate.issues.join("; "));
   });
 
   await runStep(context, "review_and_lock_image_assets", async () => {
-    context.lockedImageAssets = buildLockedImageAssets({
-      smallProjectId: projectId,
-      decisions: context.imageResults.flatMap((result) =>
-        result.candidates.slice(0, 1).map((candidate) => ({
-          candidateId: candidate.candidateId,
-          sceneId: requestSceneId(context.fixtureImagePlan, result.requestId),
-          role: "background" as const,
-          path: candidate.path,
-          sha256: candidate.sha256,
-          prompt: requestPrompt(context.fixtureImagePlan, result.requestId),
-          status: "locked" as const,
-        }))
-      ),
-    });
+    const decisionPath = options.reviewDecisionPath ? path.resolve(options.reviewDecisionPath) : defaultReviewDecisionPath(paths);
+    const reviewDecisionFile = await readOptionalJson<unknown>(decisionPath);
+    let decisions: ImageDecision[];
+
+    if (reviewDecisionFile) {
+      const validation = validateImageAssetReviewDecisionFile({
+        review: reviewDecisionFile,
+        smallProjectId: projectId,
+        candidateIds: context.imageResults.flatMap((result) => result.candidates.map((candidate) => candidate.candidateId)),
+      });
+      if (!validation.ok) throw new Error(validation.issues.join("; "));
+      decisions = imageDecisionsFromReview(context, validation.decisions, decisionPath);
+      context.reviewDecisionSource = "file";
+      context.reviewDecisionPath = decisionPath;
+    } else {
+      if (!options.allowAutoLockImageAssets) {
+        throw new Error(`image review decision file is required for production-strict E2E: ${decisionPath}`);
+      }
+      decisions = autoLockPreferredImageDecisions(context);
+      context.reviewDecisionSource = "auto-lock-diagnostic";
+      context.diagnostics.push("auto-locked preferred image candidates for diagnostic run");
+    }
+
+    context.lockedImageAssets = buildLockedImageAssets({ smallProjectId: projectId, decisions });
     if (context.lockedImageAssets.assets.length === 0) throw new Error("no locked generated background assets");
     await writeJson(path.join(paths.projectRoot, "assets", "image_assets.json"), context.lockedImageAssets);
   });
@@ -226,6 +287,7 @@ export async function runMediaE2EWorkflow(
       model: options.htmlVideoModel,
       timeoutMs: options.htmlVideoRuntimeTimeoutMs ?? parseOptionalPositiveInt(process.env.QIVANCE_HTML_VIDEO_RUNTIME_TIMEOUT_MS) ?? 2 * 60 * 1000,
     });
+    context.htmlVideoRuntimeExitCode = result.exitCode;
     await writeJson(path.join(paths.codexDir, "html-video-runtime-result.json"), result);
     if (result.exitCode !== 0) {
       context.diagnostics.push(`html-video agent runtime did not complete cleanly: ${result.stderr || `exit ${result.exitCode}`}`);
@@ -237,9 +299,18 @@ export async function runMediaE2EWorkflow(
       animationPlan: requiredAnimationPlan(context),
       imageAssets: context.lockedImageAssets?.assets ?? [],
     });
+    context.fallbackFramePaths = fallbackFrames;
     if (fallbackFrames.length > 0) {
       context.diagnostics.push(`html-video runtime missing ${fallbackFrames.length} frame(s); generated contract fallback frames`);
     }
+    const gate = validateMediaE2EProductionGates({
+      cachedImagegenRequests: [],
+      fallbackFramePaths: fallbackFrames,
+      htmlVideoRuntimeExitCode: result.exitCode,
+      allowCachedImagegen: options.allowCachedImagegen,
+      allowFallbackFrames: options.allowFallbackFrames,
+    });
+    if (!gate.ok) throw new Error(gate.issues.join("; "));
     await syncProjectFramesFromContracts(paths, requiredFrameContracts(context));
   });
 
@@ -293,7 +364,10 @@ export async function runMediaE2EWorkflow(
   });
 
   await runStep(context, "write_render_manifest", async () => {
-    await writeJson(paths.renderManifestPath, await buildManifest(context));
+    const manifest = await buildManifest(context, options);
+    const validation = validateRenderManifestV2(manifest);
+    if (!validation.ok) throw new Error(`render manifest evidence is incomplete: ${validation.issues.join("; ")}`);
+    await writeJson(paths.renderManifestPath, manifest);
   });
 
   await runStep(context, "append_test_report_evidence", async () => {
@@ -302,6 +376,11 @@ export async function runMediaE2EWorkflow(
       ratio,
       manifestPath: paths.renderManifestPath,
       status: "passed",
+      evidenceStatus: {
+        liveImagegenPassed: context.cachedImagegenRequests.length === 0,
+        aiAuthoredFramesPassed: context.htmlVideoRuntimeExitCode === 0 && context.fallbackFramePaths.length === 0,
+        reviewDecisionSource: context.reviewDecisionSource,
+      },
     });
   });
 
@@ -331,6 +410,12 @@ type WorkflowContext = {
   visualProbe: MediaProbe | null;
   finalProbe: MediaProbe | null;
   diagnostics: string[];
+  cachedImagegenRequests: string[];
+  fallbackFramePaths: string[];
+  htmlVideoRuntimeExitCode: number | null;
+  reviewDecisionSource: string | null;
+  reviewDecisionPath: string | null;
+  whisperxPreflight: WhisperXPreflightResult | null;
 };
 
 type FixtureAnimationPlan = {
@@ -481,7 +566,7 @@ async function syncProjectFramesFromContracts(paths: SmallProjectPaths, contract
   await store.save(nextProject);
 }
 
-async function buildManifest(context: WorkflowContext): Promise<Record<string, unknown>> {
+async function buildManifest(context: WorkflowContext, options: MediaE2EWorkflowOptions): Promise<Record<string, unknown>> {
   const paths = context.paths;
   return {
     schema_version: 2,
@@ -491,6 +576,18 @@ async function buildManifest(context: WorkflowContext): Promise<Record<string, u
     fps: context.fixturePlan.fps,
     workflow_run_id: context.runId,
     status: "passed",
+    evidence_status: {
+      media_export_passed: true,
+      live_imagegen_passed: context.cachedImagegenRequests.length === 0,
+      ai_authored_frames_passed: context.htmlVideoRuntimeExitCode === 0 && context.fallbackFramePaths.length === 0,
+      strict: {
+        production_default: true,
+        allow_cached_imagegen: Boolean(options.allowCachedImagegen),
+        allow_fallback_frames: Boolean(options.allowFallbackFrames),
+        allow_auto_lock_image_assets: Boolean(options.allowAutoLockImageAssets),
+      },
+      review_decision_source: context.reviewDecisionSource,
+    },
     steps: context.steps,
     inputs: {
       fixture_bundle: context.bundlePath,
@@ -507,12 +604,16 @@ async function buildManifest(context: WorkflowContext): Promise<Record<string, u
     word_alignment: {
       backend: "whisperx",
       env: context.pythonEnv.whisperx,
+      preflight: context.whisperxPreflight,
       lyric_word_timing: await evidence(path.join(paths.timingDir, "lyric_word_timing.json")),
       alignment_report: await evidence(path.join(paths.timingDir, "alignment_report.json")),
     },
     image_generation: {
       adapter_id: "codex_image_gen",
+      image_generation_results: await evidence(imageGenerationResultsPath(paths)),
       image_assets: await evidence(path.join(paths.projectRoot, "assets", "image_assets.json")),
+      review_decisions: context.reviewDecisionPath ? await evidence(context.reviewDecisionPath) : null,
+      cached_request_ids: context.cachedImagegenRequests,
       results: context.imageResults,
     },
     html_video: {
@@ -520,6 +621,9 @@ async function buildManifest(context: WorkflowContext): Promise<Record<string, u
       content_graph: await evidence(paths.contentGraphPath),
       frame_contracts: await evidence(paths.frameContractsPath),
       agent_context: await evidence(paths.codexAgentContextPath),
+      frames: await frameEvidence(paths, requiredFrameContracts(context)),
+      runtime_exit_code: context.htmlVideoRuntimeExitCode,
+      fallback_frame_paths: context.fallbackFramePaths,
       frame_authoring_diagnostics: context.diagnostics.filter((item) => item.includes("html-video")),
     },
     render: {
@@ -533,9 +637,83 @@ async function buildManifest(context: WorkflowContext): Promise<Record<string, u
       final_mp4: await evidence(paths.finalMp4Path),
       final_probe: context.finalProbe,
     },
-    qa: {},
+    qa: {
+      duration_drift_sec: context.finalProbe ? round(Math.abs(context.finalProbe.durationSec - context.fixturePlan.duration_sec)) : null,
+      final_has_single_audio_stream: context.finalProbe?.audioStreamCount === 1,
+    },
     diagnostics: context.diagnostics,
   };
+}
+
+function imageDecisionsFromReview(
+  context: WorkflowContext,
+  reviewDecisions: ImageAssetReviewDecision[],
+  decisionPath: string,
+): ImageDecision[] {
+  const candidates = candidateMap(context);
+  return reviewDecisions.map((decision) => {
+    const candidate = candidates.get(decision.candidateId);
+    if (!candidate) throw new Error(`missing generated image candidate for review decision: ${decision.candidateId}`);
+    return {
+      candidateId: decision.candidateId,
+      sceneId: requestSceneId(context.fixtureImagePlan, candidate.requestId),
+      role: "background",
+      path: candidate.path,
+      sha256: candidate.sha256,
+      prompt: requestPrompt(context.fixtureImagePlan, candidate.requestId),
+      status: decision.status,
+      decisionSource: decisionPath,
+      ...(decision.reason ? { reason: decision.reason } : {}),
+      ...(decision.decidedBy ? { decidedBy: decision.decidedBy } : {}),
+      ...(decision.decidedAt ? { decidedAt: decision.decidedAt } : {}),
+    };
+  });
+}
+
+function autoLockPreferredImageDecisions(context: WorkflowContext): ImageDecision[] {
+  return context.imageResults.flatMap((result) =>
+    result.candidates.slice(0, 1).map((candidate) => ({
+      candidateId: candidate.candidateId,
+      sceneId: requestSceneId(context.fixtureImagePlan, result.requestId),
+      role: "background" as const,
+      path: candidate.path,
+      sha256: candidate.sha256,
+      prompt: requestPrompt(context.fixtureImagePlan, result.requestId),
+      status: "locked" as const,
+      decisionSource: "auto-lock-diagnostic",
+    }))
+  );
+}
+
+function candidateMap(context: WorkflowContext): Map<string, ImageGenerationResult["candidates"][number] & { requestId: string }> {
+  const map = new Map<string, ImageGenerationResult["candidates"][number] & { requestId: string }>();
+  for (const result of context.imageResults) {
+    for (const candidate of result.candidates) map.set(candidate.candidateId, { ...candidate, requestId: result.requestId });
+  }
+  return map;
+}
+
+async function frameEvidence(paths: SmallProjectPaths, contracts: QivanceFrameContracts): Promise<Array<Record<string, unknown>>> {
+  return await Promise.all(Object.values(contracts.frames)
+    .sort((a, b) => a.order - b.order)
+    .map((contract) => evidence(path.join(paths.framesDir, path.basename(contract.allowedHtmlPath)))));
+}
+
+async function readOptionalJson<T>(filePath: string): Promise<T | null> {
+  try {
+    return await readJson<T>(filePath);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return null;
+    throw error;
+  }
+}
+
+function imageGenerationResultsPath(paths: SmallProjectPaths): string {
+  return path.join(paths.projectRoot, "assets", "image_generation_results.json");
+}
+
+function defaultReviewDecisionPath(paths: SmallProjectPaths): string {
+  return path.join(paths.projectRoot, "assets", "image_review_decisions.json");
 }
 
 function requiredFrameContracts(context: WorkflowContext): QivanceFrameContracts {

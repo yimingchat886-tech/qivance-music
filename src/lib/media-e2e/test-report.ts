@@ -6,13 +6,24 @@ export async function appendMediaE2ETestReportEvidence(input: {
   ratio: string;
   manifestPath: string;
   status: "passed" | "failed";
+  evidenceStatus?: {
+    liveImagegenPassed: boolean;
+    aiAuthoredFramesPassed: boolean;
+    reviewDecisionSource: string | null;
+  };
 }): Promise<void> {
   await mkdir(path.dirname(input.reportPath), { recursive: true });
-  await appendFile(input.reportPath, [
+  const lines = [
     `## ${input.ratio}`,
     "",
     `- Status: ${input.status}`,
     `- Manifest: ${input.manifestPath}`,
-    "",
-  ].join("\n"), "utf8");
+  ];
+  if (input.evidenceStatus) {
+    lines.push(`- Live imagegen: ${input.evidenceStatus.liveImagegenPassed ? "passed" : "failed"}`);
+    lines.push(`- AI-authored frames: ${input.evidenceStatus.aiAuthoredFramesPassed ? "passed" : "failed"}`);
+    lines.push(`- Review decision source: ${input.evidenceStatus.reviewDecisionSource ?? "none"}`);
+  }
+  lines.push("");
+  await appendFile(input.reportPath, lines.join("\n"), "utf8");
 }

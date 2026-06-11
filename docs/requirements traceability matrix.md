@@ -134,3 +134,9 @@ Updated evidence status:
 | RAG recycle | Not implemented | no current artifact recycling pipeline | future scope |
 
 Current caveat: V2 E2E is complete for the media/export contract, but it should not be used as evidence that html-video's AI frame authoring is stable. The timeout/fallback path is intentionally visible in manifest diagnostics.
+
+## Evidence Gate Update - 2026-06-11
+
+The media E2E entrypoint is now production-strict by default. Cached or seeded image generation evidence, non-clean html-video runtime exits, contract fallback frames, missing file-based image review decisions, and CPU-only WhisperX mode fail the default path. Diagnostic runs must pass explicit allow flags such as `--allow-cached-imagegen`, `--allow-fallback-frames`, `--allow-auto-lock-image-assets`, or `--allow-cpu-whisperx-diagnostic`.
+
+This preserves the previous diagnostic workflow while preventing `final.mp4` production from being treated as live imagegen or AI-authored frame evidence when the run used cached assets or fallback frames.

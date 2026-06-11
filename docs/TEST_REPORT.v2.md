@@ -110,3 +110,9 @@ npm --prefix vendor/html-video/packages/adapter-hyperframes run typecheck
 - R93 is implemented/passed for local locked image propagation into ContentGraph, frame contracts, agent context, validation, and render.
 - R94 remains partially implemented because the local run used fallback frames after html-video agent runtime timeout; AI-authored frame output still needs stable runtime evidence.
 - R95 remains unimplemented; RAG asset recycling is not part of this V2 E2E completion.
+
+## Evidence Gate Update - 2026-06-11
+
+The media E2E entrypoint is now production-strict by default. Cached or seeded image generation evidence, non-clean html-video runtime exits, contract fallback frames, missing file-based image review decisions, and CPU-only WhisperX mode fail the default path. Diagnostic runs must pass explicit allow flags such as `--allow-cached-imagegen`, `--allow-fallback-frames`, `--allow-auto-lock-image-assets`, or `--allow-cpu-whisperx-diagnostic`.
+
+This preserves the previous diagnostic workflow while preventing `final.mp4` production from being treated as live imagegen or AI-authored frame evidence when the run used cached assets or fallback frames.

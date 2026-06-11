@@ -32,3 +32,38 @@ export function resolveMediaE2EPythonEnv(input: {
   };
 }
 
+export type WhisperXPreflightResult = {
+  ok: boolean;
+  mode: "full" | "diagnostic";
+  issues: string[];
+  diagnostics: string[];
+};
+
+export function validateWhisperXPreflight(input: {
+  pythonEnv: MediaE2EPythonEnv;
+  allowCpuDiagnostic?: boolean;
+  requireGpu?: boolean;
+}): WhisperXPreflightResult {
+  const issues: string[] = [];
+  const diagnostics: string[] = [];
+  const requireGpu = input.requireGpu ?? input.pythonEnv.whisperx.requireGpu;
+
+  if (input.pythonEnv.whisperx.device === "cpu") {
+    diagnostics.push("WhisperX is configured for CPU; this is diagnostic-only for V2 media E2E.");
+    if (!input.allowCpuDiagnostic) {
+      issues.push("WhisperX CPU mode is diagnostic-only; set an explicit diagnostic allow flag or configure QIVANCE_WHISPERX_DEVICE=cuda for full E2E.");
+    }
+  }
+
+  if (requireGpu && input.pythonEnv.whisperx.device !== "cuda") {
+    issues.push("WhisperX full E2E requires CUDA/GPU configuration.");
+  }
+
+  return {
+    ok: issues.length === 0,
+    mode: input.pythonEnv.whisperx.device === "cpu" ? "diagnostic" : "full",
+    issues,
+    diagnostics,
+  };
+}
+

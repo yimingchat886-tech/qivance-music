@@ -14,6 +14,11 @@ test("appends human-readable media E2E report evidence", async () => {
     ratio: "portrait-9x16",
     manifestPath: "projects/media_e2e_v2_portrait_9x16/exports/render_manifest.json",
     status: "passed",
+    evidenceStatus: {
+      liveImagegenPassed: false,
+      aiAuthoredFramesPassed: false,
+      reviewDecisionSource: "file",
+    },
   });
 
   const report = await readFile(reportPath, "utf8");
@@ -21,4 +26,7 @@ test("appends human-readable media E2E report evidence", async () => {
   assert.match(report, /## portrait-9x16/);
   assert.match(report, /Status: passed/);
   assert.match(report, /render_manifest\.json/);
+  assert.match(report, /Live imagegen: failed/);
+  assert.match(report, /AI-authored frames: failed/);
+  assert.match(report, /Review decision source: file/);
 });
