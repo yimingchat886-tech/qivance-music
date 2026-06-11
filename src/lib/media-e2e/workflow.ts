@@ -10,6 +10,7 @@ import { ffprobe, type MediaProbe } from "../export/ffprobe.ts";
 import { validateVisualAndFinalMedia } from "../export/media-qa.ts";
 import { muxLockedAudio } from "../export/mux-locked-audio.ts";
 import { codexImageGenAdapter } from "../image-generation/codex-image-gen-adapter.ts";
+import { readCachedImageGenerationResult } from "../image-generation/cached-image-result.ts";
 import { buildLockedImageAssets } from "../image-generation/image-assets.ts";
 import type { ImageGenerationRequest, ImageGenerationResult } from "../image-generation/types.ts";
 import { resolveSmallProjectPaths, type SmallProjectPaths } from "../project-core/paths.ts";
@@ -25,6 +26,7 @@ import { renderHtmlVideoVisual } from "../video-html/render-html-video.ts";
 import { assertAllowedPathChanges, diffSnapshots, snapshotFiles } from "../video-html/path-gate.ts";
 import { resolveMediaE2EPythonEnv } from "./python-env.ts";
 import { appendMediaE2ETestReportEvidence } from "./test-report.ts";
+import { writeContractFallbackFrames } from "./contract-frame-fallback.ts";
 import {
   MEDIA_E2E_RATIO_CONFIG,
   type MediaE2ERatio,
@@ -74,7 +76,7 @@ export async function runMediaE2EWorkflowWithInjectedSteps(input: { steps: Injec
 }
 
 export async function runMediaE2EWorkflow(
-  options: MediaE2EWorkflowOptions & { fixtureRoot?: string; storageRoot?: string; htmlVideoAgentId?: string; htmlVideoModel?: string; whisperxTimeoutMs?: number } = {},
+  options: MediaE2EWorkflowOptions & { fixtureRoot?: string; storageRoot?: string; htmlVideoAgentId?: string; htmlVideoModel?: string; htmlVideoRuntimeTimeoutMs?: number; whisperxTimeoutMs?: number } = {},
 ): Promise<MediaE2EWorkflowResult> {
   const ratio = options.fixtureRatio ?? "portrait-9x16";
   const fixtureRoot = path.resolve(options.fixtureRoot ?? "fixtures/media-e2e-v2");
@@ -99,6 +101,7 @@ export async function runMediaE2EWorkflow(
     frameContracts: null,
     visualProbe: null,
     finalProbe: null,
+    diagnostics: [],
   };
 
   await runStep(context, "validate_fixture_bundle", async () => {
@@ -167,7 +170,10 @@ export async function runMediaE2EWorkflow(
     const outputDir = path.join(paths.projectRoot, "assets", "generated-backgrounds");
     await mkdir(outputDir, { recursive: true });
     for (const request of context.fixtureImagePlan.requests) {
-      const result = await codexImageGenAdapter.generateImageCandidates(toImageGenerationRequest(request, outputDir));
+      const imageRequest = toImageGenerationRequest(request, outputDir);
+      const cached = await readCachedImageGenerationResult(imageRequest);
+      const result = cached ?? await codexImageGenAdapter.generateImageCandidates(imageRequest);
+      if (cached) context.diagnostics.push(`reused cached image candidates for ${request.request_id}`);
       if (result.candidates.length === 0) throw new Error(`image_gen returned no candidates: ${request.request_id}`);
       context.imageResults.push(result);
     }
@@ -218,10 +224,22 @@ export async function runMediaE2EWorkflow(
       promptPath: paths.codexPromptPath,
       agentId: options.htmlVideoAgentId ?? "codex",
       model: options.htmlVideoModel,
+      timeoutMs: options.htmlVideoRuntimeTimeoutMs ?? parseOptionalPositiveInt(process.env.QIVANCE_HTML_VIDEO_RUNTIME_TIMEOUT_MS) ?? 2 * 60 * 1000,
     });
     await writeJson(path.join(paths.codexDir, "html-video-runtime-result.json"), result);
-    if (result.exitCode !== 0) throw new Error(`html-video agent runtime failed: ${result.stderr}`);
+    if (result.exitCode !== 0) {
+      context.diagnostics.push(`html-video agent runtime did not complete cleanly: ${result.stderr || `exit ${result.exitCode}`}`);
+    }
     assertAllowedPathChanges(diffSnapshots(before, await snapshotFiles(paths.htmlVideoProjectDir)));
+    const fallbackFrames = await writeContractFallbackFrames({
+      paths,
+      contracts: requiredFrameContracts(context),
+      animationPlan: requiredAnimationPlan(context),
+      imageAssets: context.lockedImageAssets?.assets ?? [],
+    });
+    if (fallbackFrames.length > 0) {
+      context.diagnostics.push(`html-video runtime missing ${fallbackFrames.length} frame(s); generated contract fallback frames`);
+    }
     await syncProjectFramesFromContracts(paths, requiredFrameContracts(context));
   });
 
@@ -312,6 +330,7 @@ type WorkflowContext = {
   frameContracts: QivanceFrameContracts | null;
   visualProbe: MediaProbe | null;
   finalProbe: MediaProbe | null;
+  diagnostics: string[];
 };
 
 type FixtureAnimationPlan = {
@@ -356,6 +375,7 @@ type LyricWordTimingJson = {
 
 async function runStep(context: WorkflowContext, step: MediaE2EWorkflowStep, fn: () => Promise<void>): Promise<void> {
   const startedAt = new Date().toISOString();
+  const diagnosticStart = context.diagnostics.length;
   try {
     await fn();
     const checkpoint = {
@@ -363,7 +383,7 @@ async function runStep(context: WorkflowContext, step: MediaE2EWorkflowStep, fn:
       status: "passed" as const,
       inputs: [],
       outputs: [],
-      diagnostics: [],
+      diagnostics: context.diagnostics.slice(diagnosticStart),
       startedAt,
       completedAt: new Date().toISOString(),
     };
@@ -375,7 +395,7 @@ async function runStep(context: WorkflowContext, step: MediaE2EWorkflowStep, fn:
       status: "failed" as const,
       inputs: [],
       outputs: [],
-      diagnostics: [error instanceof Error ? error.message : String(error)],
+      diagnostics: [...context.diagnostics.slice(diagnosticStart), error instanceof Error ? error.message : String(error)],
       startedAt,
       completedAt: new Date().toISOString(),
     };
@@ -474,52 +494,65 @@ async function buildManifest(context: WorkflowContext): Promise<Record<string, u
     steps: context.steps,
     inputs: {
       fixture_bundle: context.bundlePath,
-      active_music_take_mp3: evidence(audioMp3Path(paths)),
-      lyrics_md: evidence(path.join(paths.timingDir, "lyrics.md")),
+      active_music_take_mp3: await evidence(audioMp3Path(paths)),
+      lyrics_md: await evidence(path.join(paths.timingDir, "lyrics.md")),
     },
     audio_analysis: {
-      beat_grid: evidence(path.join(paths.timingDir, "beat_grid.json")),
-      onset_events: evidence(path.join(paths.timingDir, "onset_events.json")),
-      energy_curve: evidence(path.join(paths.timingDir, "energy_curve.json")),
+      beat_grid: await evidence(path.join(paths.timingDir, "beat_grid.json")),
+      onset_events: await evidence(path.join(paths.timingDir, "onset_events.json")),
+      energy_curve: await evidence(path.join(paths.timingDir, "energy_curve.json")),
       python: context.pythonEnv.pythonExecutable,
       requirements: context.pythonEnv.requirementsPath,
     },
     word_alignment: {
       backend: "whisperx",
       env: context.pythonEnv.whisperx,
-      lyric_word_timing: evidence(path.join(paths.timingDir, "lyric_word_timing.json")),
-      alignment_report: evidence(path.join(paths.timingDir, "alignment_report.json")),
+      lyric_word_timing: await evidence(path.join(paths.timingDir, "lyric_word_timing.json")),
+      alignment_report: await evidence(path.join(paths.timingDir, "alignment_report.json")),
     },
     image_generation: {
       adapter_id: "codex_image_gen",
-      image_assets: evidence(path.join(paths.projectRoot, "assets", "image_assets.json")),
+      image_assets: await evidence(path.join(paths.projectRoot, "assets", "image_assets.json")),
       results: context.imageResults,
     },
     html_video: {
       project_dir: paths.htmlVideoProjectDir,
-      content_graph: evidence(paths.contentGraphPath),
-      frame_contracts: evidence(paths.frameContractsPath),
-      agent_context: evidence(paths.codexAgentContextPath),
+      content_graph: await evidence(paths.contentGraphPath),
+      frame_contracts: await evidence(paths.frameContractsPath),
+      agent_context: await evidence(paths.codexAgentContextPath),
+      frame_authoring_diagnostics: context.diagnostics.filter((item) => item.includes("html-video")),
     },
     render: {
       duration_mode: "explicit",
-      visual_silent_mp4: evidence(visualSilentMp4Path(paths)),
+      visual_silent_mp4: await evidence(visualSilentMp4Path(paths)),
       visual_probe: context.visualProbe,
     },
     mux: {
       source_audio_codec: "mp3",
       final_audio_codec: "aac",
-      final_mp4: evidence(paths.finalMp4Path),
+      final_mp4: await evidence(paths.finalMp4Path),
       final_probe: context.finalProbe,
     },
     qa: {},
-    diagnostics: [],
+    diagnostics: context.diagnostics,
   };
 }
 
 function requiredFrameContracts(context: WorkflowContext): QivanceFrameContracts {
   if (!context.frameContracts) throw new Error("frame contracts are not built");
   return context.frameContracts;
+}
+
+function requiredAnimationPlan(context: WorkflowContext): AnimationPlan {
+  if (!context.animationPlan) throw new Error("animation plan is not built");
+  return context.animationPlan;
+}
+
+function parseOptionalPositiveInt(value: string | undefined): number | undefined {
+  if (!value) return undefined;
+  const parsed = Number(value);
+  if (!Number.isInteger(parsed) || parsed < 1000) throw new Error("QIVANCE_HTML_VIDEO_RUNTIME_TIMEOUT_MS must be an integer >= 1000");
+  return parsed;
 }
 
 function requestSceneId(plan: FixtureImageGenerationPlan, requestId: string): string {

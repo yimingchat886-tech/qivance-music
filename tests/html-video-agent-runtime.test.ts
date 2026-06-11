@@ -38,3 +38,32 @@ test("runs html-video agent runtime through injected deps", async () => {
   assert.equal(result.stdout, "ok");
   assert.deepEqual(events, ["Write frames", root]);
 });
+
+test("times out html-video agent runtime", async () => {
+  const root = path.join(tmpdir(), `qivance-html-video-runtime-timeout-${Date.now()}`);
+  const promptPath = path.join(root, "prompt.md");
+  await mkdir(root, { recursive: true });
+  await writeFile(promptPath, "Write frames", "utf8");
+  let stopped = false;
+  const deps: HtmlVideoRuntimeDeps = {
+    findAgent: (id) => ({ id, name: "Test Agent" }),
+    spawnAgent: () => ({
+      pid: 0,
+      stop: () => {
+        stopped = true;
+      },
+      done: new Promise(() => undefined),
+    }),
+  };
+
+  const result = await runHtmlVideoAgentRuntimeWithDeps({
+    projectDir: root,
+    promptPath,
+    timeoutMs: 10,
+  }, deps);
+
+  assert.equal(result.exitCode, 124);
+  assert.equal(result.timedOut, true);
+  assert.equal(stopped, true);
+  assert.match(result.stderr, /timed out/);
+});

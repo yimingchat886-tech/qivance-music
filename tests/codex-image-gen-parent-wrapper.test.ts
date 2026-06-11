@@ -45,6 +45,7 @@ test("parent wrapper discovers generated images and emits canonical result", asy
   assert.equal(result.candidates[0]?.height, 1254);
   assert.equal(result.candidates[0]?.provenance.sourcePath, path.join(sessionDir, "ig_test.png"));
   assert.ok(args.includes("--output-last-message"));
+  assert.ok(args.includes("--ignore-user-config"));
   assert.match(prompt, /Only call image generation/);
   assert.doesNotMatch(prompt, /copy or move/i);
 });

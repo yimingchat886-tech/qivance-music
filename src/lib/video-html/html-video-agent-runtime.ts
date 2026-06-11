@@ -5,6 +5,7 @@ export type HtmlVideoAgentRuntimeInput = {
   promptPath: string;
   agentId?: string;
   model?: string;
+  timeoutMs?: number;
 };
 
 type RuntimeAgentDef = { id: string; name?: string };
@@ -25,6 +26,7 @@ export type HtmlVideoRuntimeDeps = {
     prompt: string;
     context: { cwd: string; extraAllowedDirs?: string[]; model?: string };
     onEvent?: (event: RuntimeAgentEvent) => void;
+    signal?: AbortSignal;
   }): RuntimeSpawnHandle;
 };
 
@@ -33,6 +35,7 @@ export type HtmlVideoAgentRuntimeResult = {
   exitCode: number;
   stdout: string;
   stderr: string;
+  timedOut?: boolean;
 };
 
 export async function runHtmlVideoAgentRuntime(input: HtmlVideoAgentRuntimeInput): Promise<HtmlVideoAgentRuntimeResult> {
@@ -56,6 +59,7 @@ export async function runHtmlVideoAgentRuntimeWithDeps(
   const prompt = await readFile(input.promptPath, "utf8");
   let stdout = "";
   let stderr = "";
+  const abortController = new AbortController();
   const handle = deps.spawnAgent({
     def,
     prompt,
@@ -64,17 +68,32 @@ export async function runHtmlVideoAgentRuntimeWithDeps(
       extraAllowedDirs: [input.projectDir],
       ...(input.model ? { model: input.model } : {}),
     },
+    signal: abortController.signal,
     onEvent: (event) => {
       if (event.type === "text") stdout += event.chunk;
       if (event.type === "error") stderr += event.message;
     },
   });
 
-  const done = await handle.done;
+  const timeoutMs = input.timeoutMs ?? 2 * 60 * 1000;
+  let timedOut = false;
+  const timeoutDone = new Promise<{ exitCode: number; signal: NodeJS.Signals | null }>((resolve) => {
+    const timeout = setTimeout(() => {
+      timedOut = true;
+      abortController.abort();
+      handle.stop();
+      resolve({ exitCode: 124, signal: null });
+    }, timeoutMs);
+    timeout.unref();
+    handle.done.finally(() => clearTimeout(timeout));
+  });
+
+  const done = await Promise.race([handle.done, timeoutDone]);
   return {
     agentId,
-    exitCode: done.exitCode,
+    exitCode: timedOut ? 124 : done.exitCode,
     stdout,
-    stderr,
+    stderr: timedOut ? `${stderr}${stderr ? "\n" : ""}html-video agent runtime timed out after ${timeoutMs}ms` : stderr,
+    ...(timedOut ? { timedOut: true } : {}),
   };
 }

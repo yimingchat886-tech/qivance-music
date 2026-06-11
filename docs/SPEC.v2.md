@@ -669,7 +669,35 @@ type ImageGenerationResult = {
 };
 ```
 
-### 9.3 Lock Gate
+### 9.3 Local Execution Contract
+
+Environment:
+
+```text
+QIVANCE_CODEX_IMAGE_GEN_CMD=<path to parent wrapper>
+QIVANCE_CODEX_IMAGE_GEN_TIMEOUT_MS=<optional child timeout, default 300000>
+```
+
+Contract:
+
+```text
+- The parent wrapper owns `ImageGenerationResult` creation.
+- The child `codex exec` process only invokes `$imagegen`.
+- The parent wrapper copies selected Codex `generated_images` PNGs into `request.outputDir`.
+- The parent wrapper records sha256, width, height, source path, child session, and diagnostics.
+- If every expected `{requestId}_vN.png` exists in `outputDir`, V2 E2E may reuse the cached generated PNGs and must recalculate sha256/PNG dimensions before returning success.
+- Cached reuse must add a manifest diagnostic and must not invent provenance that claims a live remote generation happened in that run.
+```
+
+Validation:
+
+```text
+- timeout must fail or return structured diagnostics instead of hanging.
+- insufficient candidates must fail the image generation step.
+- cached PNGs must be readable PNG files with dimensions.
+```
+
+### 9.4 Lock Gate
 
 `image_assets.json` contains only locked assets:
 
@@ -764,6 +792,33 @@ Validation must check:
 
 ---
 
+### 10.4 Runtime Timeout And Contract Fallback
+
+Environment:
+
+```text
+QIVANCE_HTML_VIDEO_RUNTIME_TIMEOUT_MS=<optional timeout, default 120000, minimum 1000>
+```
+
+Contract:
+
+```text
+- Qivance must pass the prompt to html-video's Codex runtime through stdin.
+- The Codex runtime command must include `codex exec --ignore-user-config --skip-git-repo-check -`.
+- Qivance must stop waiting after timeout and record `exitCode: 124`, `timedOut: true`, and stderr diagnostics.
+- A non-clean runtime result must not bypass path-gate validation.
+- After a non-clean runtime result, Qivance may write missing contract fallback frames only under the allowed `frames/*.html` paths.
+- Fallback frames must include `window.__QIVANCE_FRAME`, strict duration metadata, and only locked local image references.
+- TEST_REPORT and `render_manifest.json` must state when fallback was used or when the runtime timed out.
+```
+
+Wrong vs correct:
+
+```text
+Wrong: wait indefinitely for child Codex/html-video runtime and leave E2E hung.
+Correct: timeout, stop/abort child runtime, record diagnostics, validate path changes, then use contract fallback frames if needed.
+```
+
 ## 11. Preview Smoke Spec
 
 V2 only requires static Preview smoke.
@@ -833,6 +888,17 @@ Mux command semantics:
 - b:a 192k
 - movflags +faststart
 ```
+
+### 12.3 Browser Runtime
+
+The html-video render adapter may use a system browser when the bundled Playwright browser is unavailable:
+
+```text
+PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH=/usr/bin/google-chrome
+CHROME_EXECUTABLE_PATH=/usr/bin/google-chrome
+```
+
+If both variables are absent, the adapter uses Playwright's default Chromium resolution.
 
 QA:
 

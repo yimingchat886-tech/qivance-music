@@ -54,6 +54,7 @@ export async function generateImageCandidatesViaParentWrapper(
     command: codexCommand,
     args: [
       "exec",
+      "--ignore-user-config",
       "--sandbox",
       "workspace-write",
       "--skip-git-repo-check",
