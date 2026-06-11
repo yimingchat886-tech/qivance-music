@@ -1,18 +1,18 @@
 # Requirements Traceability Matrix
 
-Date: 2026-06-07
-Branch: `codex/html-video-rebuild`
-PRD source: `qivance_music_html_video_integration_prd.md`
-SPEC source: `docs/superpowers/specs/2026-06-06-qivance-html-video-rebuild-design.md`
-PLAN source: `qivance_music_html_video_rebuild_codex_plan.md`
+Date: 2026-06-11
+Branch: `codex/brock-imagegen-smoke-wrapper`
+PRD source: `docs/qivance_music_html_video_integration_prd.v2.md`
+SPEC source: `docs/SPEC.v2.md`
+PLAN source: `docs/PLAN.v2.md`
 
 Status legend:
-- `已实现`: current V1 code implements the requirement and has direct or adjacent test coverage.
-- `部分实现`: current V1 code implements the boundary or skeleton, but not the full PRD behavior.
+- `已实现`: current code implements the requirement and has direct or adjacent test coverage.
+- `部分实现`: current code implements the boundary or skeleton, but not the full PRD behavior.
 - `未实现`: no current V1 implementation.
 - `暂缓`: explicitly out of the current implementation scope.
 
-| PRD ID | 需求 | 优先级 | V1 状态 | 测试结果 | V2 决策 | SPEC 位置 | PLAN 任务 |
+| PRD ID | 需求 | 优先级 | 当前状态 | 测试结果 | V2 决策 | SPEC 位置 | PLAN 任务 |
 |---|---|---|---|---|---|---|---|
 | R1 | 用户可以登录内部工作台，P0 阶段不区分复杂权限 | P0 | 未实现 | 未测 | V2 实现 | 暂不进入 | 无 |
 | R2 | 用户可以创建、查看、更新大项目 | P0 | 未实现 | 未测 | V2 实现 | Non-Goals | 无 |
@@ -102,13 +102,13 @@ Status legend:
 | R86 | 人工 section_map 编辑 | P2 | 暂缓 | 不适用 | 继续推迟 | Non-Goals | 无 |
 | R87 | 深度教学体系 | P2 | 暂缓 | 不适用 | 继续推迟 | Non-Goals | 无 |
 | R88 | 禁止 html-video 生成或管理最终 rap 主音频 | P0 | 已实现 | 部分通过 | 保持并补 E2E | Export | P7 |
-| R89 | Animation Plan 确认后、html-video 前支持可选生图步骤 | P0 | 未实现 | 未测 | V2 实现最小闭环 | 待更新 | 待写 |
-| R90 | Animation Plan scene 可声明 `image_generation.enabled`、素材角色、prompt 和参考图 | P0 | 未实现 | 未测 | V2 实现 schema 与校验 | 待更新 | 待写 |
-| R91 | Codex CLI image_gen adapter 生成候选图并记录 request/response/provenance | P0 | 未实现 | 未测 | V2 实现；不绑定未确认 CLI 子命令 | 待更新 | 待写 |
-| R92 | 候选图必须审核并锁定为 `image_assets.json` 后才能进入视频制作 | P0 | 未实现 | 未测 | V2 实现 lock/reject/skip | 待更新 | 待写 |
-| R93 | ContentGraph 与 `agent_context.json` 只引用锁定后的本地图像素材 | P0 | 未实现 | 未测 | V2 实现映射 | 待更新 | 待写 |
-| R94 | frame HTML agent 不在 html-video 制作阶段临时生图或引用未锁定外链图 | P0 | 未实现 | 未测 | V2 实现 gate/测试 | 待更新 | 待写 |
-| R95 | 生成图像素材、prompt 与 provenance 可进入 RAG 资产回收 | P1 | 未实现 | 未测 | V2 或后续实现 | 待更新 | 待写 |
+| R89 | Animation Plan 确认后、html-video 前支持可选生图步骤 | P0 | 部分实现 | 部分通过 | V2 已有 workflow image gate；full E2E 待跑通 | SPEC.v2 4.3、9；workflow generate_background_images | P6、P11 |
+| R90 | Animation Plan scene 可声明 `image_generation.enabled`、素材角色、prompt 和参考图 | P0 | 部分实现 | 通过 | fixture/schema 与 request 转换已覆盖；产品级编辑入口待补 | SPEC.v2 4.2、4.3 | P2、P6 |
+| R91 | Codex CLI image_gen adapter 生成候选图并记录 request/response/provenance | P0 | 部分实现 | 通过 | parent wrapper 已可真实调用 Codex image_gen；full E2E manifest 待补 | SPEC.v2 9；codex-image-gen-parent-wrapper | P6 |
+| R92 | 候选图必须审核并锁定为 `image_assets.json` 后才能进入视频制作 | P0 | 部分实现 | 部分通过 | workflow 自动锁定首选候选；人工审核/API 待补 | SPEC.v2 10；image-assets lock gate | P6 |
+| R93 | ContentGraph 与 `agent_context.json` 只引用锁定后的本地图像素材 | P0 | 部分实现 | 部分通过 | locked assets 已映射到 animation plan/frame contracts；需 full runtime 证明 | SPEC.v2 11；workflow write_html_video_workspace | P7、P8 |
+| R94 | frame HTML agent 不在 html-video 制作阶段临时生图或引用未锁定外链图 | P0 | 部分实现 | 部分通过 | frame validator/path gate 已覆盖；需 full runtime 输出证明 | SPEC.v2 11、12；frame-output validator | P8 |
+| R95 | 生成图像素材、prompt 与 provenance 可进入 RAG 资产回收 | P1 | 未实现 | 未测 | V2 后续实现 | 待更新 | 无 |
 
 ## V2 Priority Notes
 
@@ -116,56 +116,29 @@ Status legend:
 - Highest V2 product gap: project creation, upstream source/lyrics/music/timing pipeline, and Animation Plan approval.
 - Highest V2 data gap: timing bundle validation and `wordTimingRange` population.
 - Highest V2 UI gap: production canvas/editor and preview revision loop.
-- New V2 product gap: optional image generation before html-video, including Codex CLI image_gen adapter, candidate review, locked local image assets, and ContentGraph/agent_context mapping.
+- Remaining V2 image gap: run full three-ratio media E2E with the parent wrapper, prove locked local image assets through html-video runtime/render manifests, and add real review/API UX.
 
 
-## V2 Media E2E Recalibration - 2026-06-09
+## V2 Media E2E Recalibration - 2026-06-11
 
-Branch: `codex/v2-media-e2e`
-PRD source: `docs/qivance_music_html_video_integration_prd.v2.md`
-SPEC source: `docs/SPEC.v2.md`
-PLAN source: `docs/PLAN.v2.md`
+Branch: `codex/brock-imagegen-smoke-wrapper`
 TEST_REPORT source: `docs/TEST_REPORT.v2.md`
+Implementation commit: `a73032e Add parent-side Codex imagegen wrapper`
 
-V2 P0 scope is narrowed to media E2E hardening. DeepSeek/MiniMax/RAG/workbench/API/UI database rows remain outside this V2 implementation batch unless directly needed for media E2E evidence.
+Updated evidence status:
 
-Updated V2 evidence status:
-
-| Area | V2 decision | Current evidence | Next decision |
+| Area | 2026-06-11 status | Evidence | Next decision |
 |---|---|---|---|
-| Fixture bundles | Three independent 9:16, 16:9, 1:1 bundles are required | `fixtures/media-e2e-v2/*` created; `tests/media-e2e-real-fixtures.test.ts` passed | Replace generated sine MP3s with production representative songs if stricter content realism is required |
-| Audio analysis | librosa is required for duration, beat, onset, energy evidence | TS artifact validator and Python script added; real analysis passed via `/home/jym/workspace/project-rap/.venv/bin/python` with `librosa==0.11.0` | Decide whether qivance-music should own its own `.venv` or continue using the project-rap audio venv |
-| Word timing | WhisperX primary path plus quality gate | normalizer, quality gate, timing-only override validation tests passed; three fixture `lyric_word_timing.json` files seeded from project-rap WhisperX evidence | Wire real WhisperX and GPU path |
-| Section map | Build from lyrics/audio evidence | section map builder unit test passed | Feed real WhisperX/librosa outputs |
-| Image generation | Adapter abstraction plus Codex image_gen as V2 main implementation | adapter interface and locked image assets gate passed | Wire actual Codex image_gen invocation and review lock file/API |
-| html-video runtime | Use html-video own agent/runtime; Qivance supplies context/gates | runtime bridge stub and frame reference validator passed | Wire V2 workflow to call `runHtmlVideoAgentRuntime`; direct runtime bridge now exists and detects codex/claude/hermes locally |
-| Strict duration | Responsibility belongs to html-video; Qivance only records/verifies | no V2 duplicate duration parser added | Remove or quarantine existing Qivance strict adapter behavior in a later impact-checked step |
-| Mux/export | Qivance muxes locked MP3 to AAC final output | mux command builder and ffprobe codec/stream parser tests passed | Run real visual render + final mux E2E |
-| Manifest/report | Manifest is machine-readable evidence; TEST_REPORT is human summary | V2 manifest skeleton and `docs/TEST_REPORT.v2.md` added | Populate manifest with real E2E artifacts |
-| Preview revision | Out of V2 | no user modification iteration added | Move to later version |
-
-
-## V2 Media E2E Recalibration - 2026-06-10
-
-Branch: codex/v2-media-e2e
-TEST_REPORT source: docs/TEST_REPORT.v2.md
-
-Updated implementation evidence:
-
-| Area | 2026-06-10 status | Evidence | Next decision |
-|---|---|---|---|
-| Python env | Partially implemented | requirements/media-e2e-python.txt records pinned media deps; local .venv is gitignored and points to the verified project-rap env; import check shows librosa 0.11.0 and CUDA true | For portable CI/dev, replace the local symlink with a documented setup command or checked setup script |
-| librosa runner | Implemented for local E2E gate | Three ratios passed analyze_audio_with_librosa checkpoints and produced beat_grid/onset_events/energy_curve under projects/media_e2e_v2_* | Keep as music evidence layer; do not replace with WhisperX |
-| fresh WhisperX | Implemented for local E2E gate | Three ratios reached image_gen gate after fresh alignment; portrait report proves whisperx 3.8.6, torch CUDA, GPU, hashes, and word coverage 1.0 | Keep forced-alignment script and tighten metrics/schema tests if production samples become more varied |
-| image_gen external command | Contract implemented, real command missing | codex image_gen adapter requires QIVANCE_CODEX_IMAGE_GEN_CMD and fails fast when absent; local codex --help and codex exec --help expose no stable image_gen/file-output command | Provide a real command/API wrapper for Codex image_gen before full E2E can pass |
-| 15-step orchestrator | Implemented as fail-fast real workflow | runMediaE2EWorkflow now executes fixture, librosa, WhisperX, section_map, image_gen gate, html-video/runtime/render/mux/ffprobe/manifest steps in order | Continue after real image_gen command is available |
-| html-video runtime/frame/render path | Wired after image gate but unexecuted | Code path calls ensureHtmlVideoWorkspace, runHtmlVideoAgentRuntime, frame validator, preview smoke, renderHtmlVideoVisual, muxLockedAudio, ffprobe | Needs real image generation outputs first; then run local full E2E |
-| render_manifest | Wired but no passed runtime manifest yet | Manifest writer in workflow includes step, audio, word alignment, image generation, html-video, render, mux, probe evidence | Cannot mark passed until visual/final outputs exist |
+| image_gen external command | Partially implemented and live-smoked | `QIVANCE_CODEX_IMAGE_GEN_CMD` can point to `scripts/codex-image-gen-parent-wrapper.ts`; wrapper invokes child `codex exec`, scans Codex `generated_images`, copies output, computes sha256/dimensions, and returns `ImageGenerationResult` | Use this command in the full three-ratio media E2E run |
+| child timeout | Implemented | parent wrapper defaults child timeout to 300000 ms and supports `QIVANCE_CODEX_IMAGE_GEN_TIMEOUT_MS`; timeout path covered by tests | Tune timeout per production image complexity if needed |
+| adapter contract | Implemented at command boundary | committed-file tests pass for adapter request JSON, missing command fail-fast, generated image discovery, insufficient candidates, and timeout | Add manifest assertions once full workflow writes render manifests |
+| live smoke | Passed for one 1:1 request | output `/tmp/qivance-codex-imagegen-parent-live/img_req_parent_smoke_001_v1.png`, 1254x1254, sha256 `3e2c00fd63c660fa2829939ea7bb028d8181a5ff835dcc1b5488607732b0e139` | Run portrait/landscape/square fixtures end-to-end |
+| full media E2E | Not yet claimed | TEST_REPORT no longer treats image_gen command absence as the hard blocker, but no passed `projects/media_e2e_v2_*/exports/render_manifest.json` is recorded | Execute downstream html-video runtime/render/mux/ffprobe gates with real generated images |
 
 Requirement status changes:
 
-- R17, R18, R19: move from seeded or unproven to partially implemented with fresh local WhisperX/librosa evidence.
-- R31, R47, R50, R52, R53: remain partially implemented because execution is blocked before html-video runtime/render/ffprobe final gates.
-- R89-R94: image generation boundary is partially implemented at adapter/lock-gate contract level, but not completed because the real Codex image_gen command is absent.
+- R89-R91: move from unimplemented/blocked to partially implemented with direct tests and one live image generation smoke.
+- R92-R94: remain partially implemented because lock gate and local asset references are wired, but full html-video/runtime/render evidence after real image generation is still missing.
+- R95: unchanged; RAG asset recycling is out of this wrapper fix.
 
-Current hard blocker: QIVANCE_CODEX_IMAGE_GEN_CMD is not configured. The installed Codex CLI does not expose a stable image_gen command in codex --help or codex exec --help, so V2 full local E2E cannot pass by design until a real command/API wrapper is provided.
+Current hard blocker: full V2 completion now depends on running and passing the downstream three-ratio media E2E gates with `QIVANCE_CODEX_IMAGE_GEN_CMD=/home/jym/workspace/qivance-music/scripts/codex-image-gen-parent-wrapper.ts`. The previous blocker, absence of a real Codex image_gen external command, is resolved for local smoke purposes.

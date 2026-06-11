@@ -5,6 +5,9 @@ coverage/
 projects/
 tmp/
 *.log
+.agents/
+.codex/
+.trellis/
 
 .venv/
 .venv

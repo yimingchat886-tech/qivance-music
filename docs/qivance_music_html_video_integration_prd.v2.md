@@ -4,7 +4,6 @@
 > 状态：正式 V2 子 PRD
 > 父 PRD：`docs/qivance_music_html_video_integration_prd.md`
 > 校准依据：`docs/TEST_REPORT.v1.md`、`docs/requirements traceability matrix.md`
-> 暂行稿来源：`docs/PRDv2暂行1.md`
 > 版本目标：在 V1 已完成的 html-video 后端边界上，证明三种比例的真实媒体链路可以从锁定输入产出可验收 `final.mp4`。
 
 ---
