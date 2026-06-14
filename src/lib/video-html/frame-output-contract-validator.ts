@@ -13,6 +13,7 @@ export async function validateFrameOutputs(input: {
   framesDir: string;
   contracts: QivanceFrameContracts;
   allowedLocalImagePaths: string[];
+  allowedLocalVideoPaths?: string[];
 }): Promise<FrameOutputValidationResult> {
   const issues: string[] = [];
   const contracts = Object.values(input.contracts.frames).sort((a, b) => a.order - b.order);
@@ -28,7 +29,11 @@ export async function validateFrameOutputs(input: {
     }
 
     const html = await readFile(framePath, "utf8");
-    const refs = validateFrameHtmlReferences({ html, allowedLocalImagePaths: input.allowedLocalImagePaths });
+    const refs = validateFrameHtmlReferences({
+      html,
+      allowedLocalImagePaths: input.allowedLocalImagePaths,
+      allowedLocalVideoPaths: input.allowedLocalVideoPaths,
+    });
     issues.push(...refs.issues.map((issue) => `${contract.allowedHtmlPath}: ${issue}`));
 
     const metadata = extractQivanceFrameMetadata(html);
@@ -62,4 +67,3 @@ function extractQivanceFrameMetadata(html: string): Record<string, unknown> | nu
     return null;
   }
 }
-

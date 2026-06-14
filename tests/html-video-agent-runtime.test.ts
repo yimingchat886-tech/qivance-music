@@ -1,7 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { mkdir, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
 import path from "node:path";
 import {
   runHtmlVideoAgentRuntimeWithDeps,
@@ -9,7 +8,7 @@ import {
 } from "../src/lib/video-html/html-video-agent-runtime.ts";
 
 test("runs html-video agent runtime through injected deps", async () => {
-  const root = path.join(tmpdir(), `qivance-html-video-runtime-${Date.now()}`);
+  const root = path.join("/tmp", `qivance-html-video-runtime-${Date.now()}`);
   const promptPath = path.join(root, "prompt.md");
   await mkdir(root, { recursive: true });
   await writeFile(promptPath, "Write frames", "utf8");
@@ -40,7 +39,7 @@ test("runs html-video agent runtime through injected deps", async () => {
 });
 
 test("times out html-video agent runtime", async () => {
-  const root = path.join(tmpdir(), `qivance-html-video-runtime-timeout-${Date.now()}`);
+  const root = path.join("/tmp", `qivance-html-video-runtime-timeout-${Date.now()}`);
   const promptPath = path.join(root, "prompt.md");
   await mkdir(root, { recursive: true });
   await writeFile(promptPath, "Write frames", "utf8");

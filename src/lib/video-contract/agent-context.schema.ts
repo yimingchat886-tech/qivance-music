@@ -1,5 +1,10 @@
 import type { SmallProjectPaths } from "../project-core/paths.ts";
 import type { AnimationPlan } from "./animation-plan.schema.ts";
+import { sourceVideoAgentContext, type SourceVideoImportFile } from "../video-html/source-video-import.ts";
+
+export type AgentContextSourceVideo =
+  | { enabled: false }
+  | ReturnType<typeof sourceVideoAgentContext>;
 
 export type AgentContext = {
   schemaVersion: 1;
@@ -19,6 +24,7 @@ export type AgentContext = {
     lyricWordTiming: string;
     masterAudio: string;
   };
+  sourceVideo: AgentContextSourceVideo;
   allowedWritePaths: string[];
   forbiddenWritePaths: string[];
   instructions: {
@@ -34,6 +40,7 @@ export type AgentContext = {
 export function buildAgentContext(input: {
   plan: AnimationPlan;
   paths: SmallProjectPaths;
+  sourceVideoImport?: SourceVideoImportFile;
 }): AgentContext {
   return {
     schemaVersion: 1,
@@ -53,6 +60,7 @@ export function buildAgentContext(input: {
       lyricWordTiming: "../../../timing/lyric_word_timing.json",
       masterAudio: "../../../audio/master/active_music_take.wav",
     },
+    sourceVideo: input.sourceVideoImport ? sourceVideoAgentContext(input.sourceVideoImport) : { enabled: false },
     allowedWritePaths: ["frames/**/*.html", "codex/**", "qa/**"],
     forbiddenWritePaths: [
       "project.json",

@@ -17,6 +17,14 @@ test("Codex frame prompt includes strict duration and forbidden edit instruction
   assert.match(prompt, /Qivance html-video frame author/);
   assert.match(prompt, /You do not generate music/);
   assert.match(prompt, /durationPolicy=strict/);
+  assert.match(prompt, /allowedHtmlPath/);
+  assert.match(prompt, /must exist on disk/);
+  assert.match(prompt, /Do not only describe the HTML/);
+  assert.match(prompt, /JSON\.parse succeeds/);
+  assert.match(prompt, /window\.__QIVANCE_FRAME = \{"graphNodeId":"scene_id"/);
+  assert.match(prompt, /sourceVideo\.enabled=true/);
+  assert.match(prompt, /exact sourceVideo\.path/);
+  assert.match(prompt, /print DONE, and exit/);
   assert.match(prompt, /do not change content-graph\.json/i);
   assert.match(prompt, /No network assets/);
 });

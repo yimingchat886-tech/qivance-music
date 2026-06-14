@@ -1,19 +1,19 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { mkdir, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
 import path from "node:path";
 import { validateFrameOutputs } from "../src/lib/video-html/frame-output-contract-validator.ts";
 import type { QivanceFrameContracts } from "../src/lib/video-html/qivance-frame-contracts.ts";
 
 test("validates frame count, metadata, duration, and locked image refs", async () => {
-  const root = path.join(tmpdir(), `qivance-frame-contract-${Date.now()}`);
+  const root = path.join("/tmp", `qivance-frame-contract-${Date.now()}`);
   await mkdir(root, { recursive: true });
   await writeFile(path.join(root, "01-scene.html"), `
     <script>
       window.__QIVANCE_FRAME = {"graphNodeId":"scene_001","sceneId":"scene_001","durationSec":8,"durationPolicy":"strict"};
     </script>
     <img src="images/bg.png" />
+    <video src="source_video.mp4"></video>
   `);
   const contracts: QivanceFrameContracts = {
     schemaVersion: 1,
@@ -42,6 +42,7 @@ test("validates frame count, metadata, duration, and locked image refs", async (
     framesDir: root,
     contracts,
     allowedLocalImagePaths: ["images/bg.png"],
+    allowedLocalVideoPaths: ["source_video.mp4"],
   });
 
   assert.equal(result.ok, true);
@@ -49,9 +50,13 @@ test("validates frame count, metadata, duration, and locked image refs", async (
 });
 
 test("rejects missing metadata and unlocked image refs", async () => {
-  const root = path.join(tmpdir(), `qivance-frame-contract-bad-${Date.now()}`);
+  const root = path.join("/tmp", `qivance-frame-contract-bad-${Date.now()}`);
   await mkdir(root, { recursive: true });
-  await writeFile(path.join(root, "01-scene.html"), `<img src="images/unlocked.png" />`);
+  await writeFile(path.join(root, "01-scene.html"), `
+    <img src="images/unlocked.png" />
+    <video src="source_video_unregistered.mp4"></video>
+    <source src="https://example.com/remote.mp4" />
+  `);
   const contracts: QivanceFrameContracts = {
     schemaVersion: 1,
     smallProjectId: "sp",
@@ -79,10 +84,12 @@ test("rejects missing metadata and unlocked image refs", async () => {
     framesDir: root,
     contracts,
     allowedLocalImagePaths: ["images/bg.png"],
+    allowedLocalVideoPaths: ["source_video.mp4"],
   });
 
   assert.equal(result.ok, false);
   assert.match(result.issues.join("\n"), /missing window\.__QIVANCE_FRAME/);
   assert.match(result.issues.join("\n"), /unlocked local image/);
+  assert.match(result.issues.join("\n"), /unregistered local video/);
+  assert.match(result.issues.join("\n"), /external video/);
 });
-

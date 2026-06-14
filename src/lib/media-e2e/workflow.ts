@@ -22,6 +22,7 @@ import { validateFrameOutputs } from "../video-html/frame-output-contract-valida
 import { buildFrameContracts, type QivanceFrameContracts } from "../video-html/qivance-frame-contracts.ts";
 import { ensureHtmlVideoWorkspace } from "../video-html/html-video-workspace.ts";
 import { runHtmlVideoAgentRuntime } from "../video-html/html-video-agent-runtime.ts";
+import { aiAuthoredFramePathsFromChangedFiles } from "../video-html/agent-run-log.ts";
 import { loadHtmlVideoPreviewModel, resolvePreviewFramePath } from "../video-html/preview-model.ts";
 import { renderHtmlVideoVisual } from "../video-html/render-html-video.ts";
 import { assertAllowedPathChanges, diffSnapshots, snapshotFiles } from "../video-html/path-gate.ts";
@@ -74,6 +75,7 @@ export function validateMediaE2EProductionGates(input: {
   cachedImagegenRequests: string[];
   fallbackFramePaths: string[];
   htmlVideoRuntimeExitCode: number | null;
+  aiAuthoredFramePaths?: string[];
   allowCachedImagegen?: boolean;
   allowFallbackFrames?: boolean;
 }): { ok: boolean; issues: string[] } {
@@ -83,6 +85,9 @@ export function validateMediaE2EProductionGates(input: {
   }
   if ((input.htmlVideoRuntimeExitCode !== null && input.htmlVideoRuntimeExitCode !== 0) && !input.allowFallbackFrames) {
     issues.push("AI-authored html-video frames require a clean runtime exit in production-strict E2E");
+  }
+  if (input.htmlVideoRuntimeExitCode !== null && (input.aiAuthoredFramePaths?.length ?? 0) === 0 && !input.allowFallbackFrames) {
+    issues.push("AI-authored html-video frames are required in production-strict E2E");
   }
   if (input.fallbackFramePaths.length > 0 && !input.allowFallbackFrames) {
     issues.push(`fallback frame evidence is not allowed in production-strict E2E: ${input.fallbackFramePaths.join(", ")}`);
@@ -223,7 +228,7 @@ export async function runMediaE2EWorkflow(
     const gate = validateMediaE2EProductionGates({
       cachedImagegenRequests: context.cachedImagegenRequests,
       fallbackFramePaths: [],
-      htmlVideoRuntimeExitCode: 0,
+      htmlVideoRuntimeExitCode: null,
       allowCachedImagegen: options.allowCachedImagegen,
       allowFallbackFrames: options.allowFallbackFrames,
     });
@@ -292,7 +297,8 @@ export async function runMediaE2EWorkflow(
     if (result.exitCode !== 0) {
       context.diagnostics.push(`html-video agent runtime did not complete cleanly: ${result.stderr || `exit ${result.exitCode}`}`);
     }
-    assertAllowedPathChanges(diffSnapshots(before, await snapshotFiles(paths.htmlVideoProjectDir)));
+    const changedFiles = diffSnapshots(before, await snapshotFiles(paths.htmlVideoProjectDir));
+    assertAllowedPathChanges(changedFiles);
     const fallbackFrames = await writeContractFallbackFrames({
       paths,
       contracts: requiredFrameContracts(context),
@@ -307,6 +313,7 @@ export async function runMediaE2EWorkflow(
       cachedImagegenRequests: [],
       fallbackFramePaths: fallbackFrames,
       htmlVideoRuntimeExitCode: result.exitCode,
+      aiAuthoredFramePaths: aiAuthoredFramePathsFromChangedFiles(changedFiles, fallbackFrames),
       allowCachedImagegen: options.allowCachedImagegen,
       allowFallbackFrames: options.allowFallbackFrames,
     });

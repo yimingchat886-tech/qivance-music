@@ -1,7 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { mkdir, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
 import path from "node:path";
 import { writeContractFallbackFrames } from "../src/lib/media-e2e/contract-frame-fallback.ts";
 import { resolveSmallProjectPaths } from "../src/lib/project-core/paths.ts";
@@ -10,7 +9,7 @@ import { validateFrameOutputs } from "../src/lib/video-html/frame-output-contrac
 import type { QivanceFrameContracts } from "../src/lib/video-html/qivance-frame-contracts.ts";
 
 test("writes missing contract fallback frames with locked image refs", async () => {
-  const storageRoot = path.join(tmpdir(), `qivance-contract-fallback-${Date.now()}`);
+  const storageRoot = path.join("/tmp", `qivance-contract-fallback-${Date.now()}`);
   const paths = resolveSmallProjectPaths(storageRoot, "sp");
   const imagePath = path.join(paths.projectRoot, "assets", "generated-backgrounds", "bg.png");
   await mkdir(path.dirname(imagePath), { recursive: true });

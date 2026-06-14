@@ -54,6 +54,16 @@ test("production gates fail cached imagegen and fallback frames by default", () 
   assert.match(gate.issues.join("\n"), /clean runtime exit/);
 });
 
+test("production gates defer AI-authored frame requirement until runtime has executed", () => {
+  const gate = validateMediaE2EProductionGates({
+    cachedImagegenRequests: [],
+    fallbackFramePaths: [],
+    htmlVideoRuntimeExitCode: null,
+  });
+
+  assert.equal(gate.ok, true);
+});
+
 test("production gates allow diagnostic cached imagegen and fallback frames only with flags", () => {
   const gate = validateMediaE2EProductionGates({
     cachedImagegenRequests: ["img_req_scene_001"],

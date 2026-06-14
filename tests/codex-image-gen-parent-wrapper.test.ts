@@ -3,7 +3,6 @@ import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { chmod, mkdtemp, mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
-import { tmpdir } from "node:os";
 import {
   generateImageCandidatesViaParentWrapper,
   type ParentImageGenRunner,
@@ -11,7 +10,7 @@ import {
 import type { ImageGenerationRequest } from "../src/lib/image-generation/types.ts";
 
 test("parent wrapper discovers generated images and emits canonical result", async () => {
-  const root = await mkdtemp(path.join(tmpdir(), "qivance-parent-wrapper-"));
+  const root = await mkdtemp(path.join("/tmp", "qivance-parent-wrapper-"));
   const generatedRoot = path.join(root, "codex-home", "generated_images");
   const sessionDir = path.join(generatedRoot, "session-001");
   const outputDir = path.join(root, "generated-backgrounds");
@@ -51,7 +50,7 @@ test("parent wrapper discovers generated images and emits canonical result", asy
 });
 
 test("parent wrapper requires enough generated candidates", async () => {
-  const root = await mkdtemp(path.join(tmpdir(), "qivance-parent-wrapper-missing-"));
+  const root = await mkdtemp(path.join("/tmp", "qivance-parent-wrapper-missing-"));
   const generatedRoot = path.join(root, "codex-home", "generated_images");
   const outputDir = path.join(root, "generated-backgrounds");
   await mkdir(generatedRoot, { recursive: true });
@@ -70,7 +69,7 @@ test("parent wrapper requires enough generated candidates", async () => {
 });
 
 test("parent wrapper reports codex exec timeout", async () => {
-  const root = await mkdtemp(path.join(tmpdir(), "qivance-parent-wrapper-timeout-"));
+  const root = await mkdtemp(path.join("/tmp", "qivance-parent-wrapper-timeout-"));
   const generatedRoot = path.join(root, "codex-home", "generated_images");
   const outputDir = path.join(root, "generated-backgrounds");
   const commandPath = path.join(root, "never-exits.js");

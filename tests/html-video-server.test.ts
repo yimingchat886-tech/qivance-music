@@ -1,7 +1,6 @@
 import assert from "node:assert/strict";
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import test from "node:test";
@@ -10,7 +9,7 @@ import { resolveSmallProjectPaths } from "../src/lib/project-core/paths.ts";
 const serverPath = fileURLToPath(new URL("../src/server.ts", import.meta.url));
 
 test("server exposes html-video preview API and sanitized frame files", async () => {
-  const tempRoot = await mkdtemp(path.join(tmpdir(), "qivance-html-video-server-"));
+  const tempRoot = await mkdtemp(path.join("/tmp", "qivance-html-video-server-"));
   const storageRoot = path.join(tempRoot, "projects");
   const smallProjectId = "project_server_html_video";
   const paths = resolveSmallProjectPaths(storageRoot, smallProjectId);
