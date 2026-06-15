@@ -7,7 +7,19 @@ tmp/
 *.log
 .agents/
 .codex/
-.trellis/
+.trellis/*
+!.trellis/workflow.md
+!.trellis/config.yaml
+!.trellis/spec/
+!.trellis/spec/**
+!.trellis/scripts/
+!.trellis/scripts/**
+.trellis/.runtime/
+.trellis/workspace/
+.trellis/tasks/
+.trellis/.template-hashes.json
+.trellis/.version
+.trellis/.developer
 
 .venv/
 .venv
