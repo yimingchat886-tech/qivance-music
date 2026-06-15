@@ -1,7 +1,7 @@
 # Requirements Traceability Matrix
 
-Date: 2026-06-14
-Branch: `codex/v3-production-workbench`
+Date: 2026-06-15
+Branch: `codex/v4-plan`
 
 Sources:
 - V2 PRD: `docs/qivance_music_html_video_integration_prd.v2.md`
@@ -10,6 +10,10 @@ Sources:
 - V3 PRD: `docs/qivance_music_html_video_integration_prd.v3.md`
 - V3 SPEC / PLAN: `docs/SPEC.v3.md`, `docs/PLAN.v3.md`
 - V3 report: `docs/TEST_REPORT.v3.md`
+- V4 PRD: `docs/qivance_music_html_video_integration_prd.v4.md`
+- V4 chat-chain PRD: `docs/qivance_music_chat_dialogue_mv_chain_prd.md`
+- V4 SPEC / PLAN: `docs/SPEC.v4.md`, `docs/PLAN.v4.md`
+- V4 report: `docs/TEST_REPORT.v4.md`
 
 Latest evidence commits:
 - `e67e223` - source-video Workbench contracts
@@ -48,8 +52,23 @@ Status legend:
 | 安全 / 权限 / SaaS | R1, R79-R83 | 未实现或暂缓：登录、权限、Tailscale、Cloudflare Access、SaaS、复杂项目权限未实现。 | 暂缓：V3 只做本地基础工作台和 API，不实现复杂权限或 SaaS。 | 内部访问控制、用户体系、权限模型、SaaS 化仍未实现。 | V3 Non-Goals in `docs/qivance_music_html_video_integration_prd.v3.md` |
 | 证据与验收 | all V2/V3 P0 evidence | 已实现并验收：V2 report 记录 media/export 三比例结果与 caveat。 | 已实现并验收：V3 report 记录 focused tests、typecheck、primary product E2E、three-ratio regression、source-video E2E、artifact paths 和 no open V3 P0 gap。 | 后续版本应新增对应 TEST_REPORT，而不是覆盖 V2/V3 evidence。 | `docs/TEST_REPORT.v2.md`; `docs/TEST_REPORT.v3.md`; `docs/requirements traceability matrix.md` |
 
+## V4 Addendum
+
+Date: 2026-06-15
+Branch: `codex/v4-plan`
+
+| 需求域 | V4 关联需求 | V4 当前实现与验收 | 仍未实现 / 后续范围 | 主要证据 |
+|---|---|---|---|---|
+| 调度器 / 多项目多链路规划 | V4 scheduler, multi-chain, multi-project, fair dispatch, resource locks | 已实现并验收：新增 file-backed scheduler types/config/events、execution plans、run queue、fair ready selection、resource locks、status summary、cancel/resume 和 local execution tick；scheduler E2E 覆盖两个项目、两个链路、scheduler tick、资源锁限制、失败隔离和恢复。 | 未实现常驻 daemon 或分布式 worker；这是 V4 non-goal。 | `src/lib/scheduler/*`; `tests/scheduler-*.test.ts`; `scripts/e2e-scheduler-v4.ts`; `/home/jym/workspace/qivance-music/projects/v4_scheduler_20260615174736` |
+| Chat Dialogue MV chain | V4 chat_dialogue_mv P0 chain | 已实现并验收：lyrics line map、speaker attribution、line timing、conversation plan、chat animation plan、frame contracts、frame HTML、headless Chrome frame capture、visual.mp4 render、final mux、chain_status metrics、render manifest v4 和 QA report 均有文件合同与测试。 | 无 V4 P0 chat render gap；后续可接入更完整的 agent-authored visual variation。 | `src/lib/chat-dialogue/*`; `tests/chat-*.test.ts`; `scripts/e2e-chat-dialogue-v4.ts`; `/home/jym/workspace/qivance-music/projects/v4_chat_dialogue_20260615174750/chat_dialogue_v4_fixture` |
+| V4 API | project chain APIs, scheduler APIs | 已实现并验收：新增 `/api/projects/:id/chains`、chat status/run/build-conversation-plan/build-frames/preview/revise/export-render/final download，以及 `/api/scheduler/status`、`/api/scheduler/runs`、run detail 和 cancel API。 | 长耗时 export/render 依赖本地 headless Chrome 和 ffmpeg 环境。 | `src/server.ts`; `tests/chat-chain-api.test.ts` |
+| Workbench V4 可视化 | scheduler status, chain summary, metrics, locks | 已实现并验收：项目详情页显示 scheduler ready/running/blocked counts、active projects/chains、resource locks、chain blocking count、low confidence speaker count、conversation message count、frame validation status、artifact status。 | 未引入新前端栈，不提供源码编辑器、timeline editor 或 html-video Studio UI。 | `src/lib/workbench/workbench-html.ts`; `tests/workbench-scheduler-html.test.ts` |
+| Render/export manifest v4 | chain-specific export evidence | 已实现并验收：manifest schema_version 4、chain id、input/output sha evidence、HTML frame render evidence、QA audio stream count/duration drift、production gate validation。 | 持久化后台 worker 暂缓；local API/script render 可产出 chain-specific export evidence。 | `src/lib/export/render-manifest-v4.ts`; `tests/render-manifest-v4.test.ts`; `docs/TEST_REPORT.v4.md` |
+| V3 regression safety | no regression to html-video contracts | 已验证：V4 session reran focused html-video coverage and typecheck; html-video server test requires local port escalation and passed separately。 | 未重跑 live V3 image-generation production-strict regression；原因是该路径耗时且调用外部 live deps。 | `tests/html-video-*.test.ts`; `docs/TEST_REPORT.v4.md` |
+
 ## Acceptance Summary
 
 - V2 验收结论：media/export 合同已通过三比例验收；V2 不再作为 AI-authored frame 稳定性的最终证据，因为 fallback/timeout 是诊断路径。
 - V3 验收结论：V3 P0 生产工作台/API 闭环已通过；primary product flow、source-video product flow、three-ratio production-strict regression 均有本地 artifact 证据。
+- V4 验收结论：V4 调度器计划/队列/execution tick/API/Workbench 可视化和 chat-dialogue 文件合同已通过 focused tests、typecheck、scheduler E2E 和 chat-dialogue E2E；持久化 daemon、分布式 worker、数据库化、SaaS 权限和上游内容生成仍是后续范围。
 - 未实现结论：剩余未实现项集中在上游内容生产、项目/用户/权限/SaaS、最终视觉设计、模板/高级编辑器、RAG recycle、数据库化和资源打包，均不是当前 V3 P0 阻塞项。
