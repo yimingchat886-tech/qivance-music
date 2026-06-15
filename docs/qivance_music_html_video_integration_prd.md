@@ -20,14 +20,39 @@
 | 9 | frame duration | **禁止自动延长**，严格按 `section_map` / `Animation Plan` / `ContentGraph.durationSec` 渲染 |
 | 10 | 输出比例 | 同时支持 **9:16 / 16:9 / 1:1** |
 | 11 | 可选生图 | 在 `Animation Plan` 确认后、进入 html-video 前，允许通过 **Codex CLI 会话中的 image_gen 能力**生成候选图像素材；默认跳过，生成后必须审核并锁定为本地 image asset，html-video 只消费锁定素材 |
-| 12 | 产品形态 | **内部使用工作台**：暂不建设 SaaS；登录、用户体系、复杂权限、Cloudflare Access / Tailscale 等访问控制能力延后 |
+| 12 | 产品形态 | **内部使用工作台**：取消 SaaS 功能；登录、用户体系、复杂权限、Cloudflare Access / Tailscale 等访问控制能力延后 |
 | 13 | 模板与资源产品化 | P0/P1 先复用内置模板和最小文件证据；Qivance 模板包、模板市场、素材库产品化、`resources.zip` 延后 |
+| 14 | V5 产品入口 | 两步创建项目：先创建空项目，再上传歌词和音频；用户确认输入后自动执行 |
+| 15 | V5 数据库 | 使用 SQLite + Prisma 作为内部控制面；媒体文件、JSON artifacts 和 MP4 仍保存在项目目录 |
+| 16 | V5 调度执行 | 使用 Node server 内置 runner loop；支持 graceful stop 和重启恢复 |
+| 17 | V5 Chain 方向 | Chain registry 保留扩展点；V5 P0 只启用 `chat_dialogue_mv`；删除 `image_storyboard_mv` 后续产品路线，下一版本再做 `video_chain` |
 
 ### 0.1 V1 校准结论
 
 本 PRD 以 `TEST_REPORT.v1` 和需求追踪矩阵为校准基准。V1 已完成 html-video vendor/submodule 接入、ContentGraph 映射、workspace 写入、Codex frame prompt、严格 duration wrapper、Preview API 骨架、render manifest 与 mux wrapper 的结构性落地。
 
 仍未证明或未实现的部分保持为后续需求：真实 Codex frame authoring E2E、真实 html-video render E2E、真实 ffmpeg mux + ffprobe QA、timing bundle 深度解析、用户修改迭代、生产 Preview UI、大项目/资料/RAG/歌词/音乐上游流程、Qivance rap 模板包、`resources.zip`。PRD 中的目标态要求不代表 V1 已全部完成；实施路线按阶段推进。
+
+### 0.2 V5 校准结论
+
+V5 以 `docs/qivance_music_html_video_integration_prd.v5.md` 为版本源文档。V5 不补全早期总 PRD 中所有目标态能力，而是聚焦：
+
+```text
+- 内部操作者产品入口：创建项目、上传歌词、上传音频、确认输入
+- SQLite + Prisma 控制面：project/input/artifact/chain/run/task/event
+- Server 内置 runner loop：确认输入后自动跑 timing pipeline 和 chat_dialogue_mv
+- 最小内部 Workbench：创建、上传、确认、查看 run/task/event、graceful stop、下载 final MP4
+```
+
+V5 明确不做：
+
+```text
+- SaaS、登录、用户体系、复杂权限、Cloudflare Access、Tailscale
+- 模板市场、Qivance rap 模板包产品化、resources.zip
+- DeepSeek 歌词生成、MiniMax 音乐生成、多 take 选择
+- image_storyboard_mv 后续链路
+- video_chain（下一版本再做）
+```
 
 ---
 
@@ -1607,6 +1632,23 @@ completed_at TIMESTAMP
 - 让 frame HTML agent 在 html-video 制作阶段临时生图
 ```
 
+### 23.4 V5 当前版本范围
+
+V5 当前版本以内部上传入口和调度执行为主，不按本总 PRD 的完整目标态一次性补齐。
+
+```text
+- 两步创建：POST /api/projects 创建空项目；POST /api/projects/:id/inputs 上传歌词和音频
+- 用户确认输入后自动创建 scheduler run
+- 自动跑 timing pipeline
+- 自动执行 chat_dialogue_mv
+- SQLite + Prisma 记录项目、输入、artifact、chain、run、task、event
+- Server 内置 runner loop 执行 queued/ready task
+- Graceful stop：当前 task 收尾，不启动下一 task
+- 最小内部 Workbench 支持创建、上传、确认、查看任务、停止和下载 final MP4
+- Chain registry 可扩展，但 P0 只启用 chat_dialogue_mv
+- image_storyboard_mv 从后续产品路线删除；video_chain 留到下一版本
+```
+
 ---
 
 ## 24. 实施路线
@@ -1663,6 +1705,21 @@ completed_at TIMESTAMP
 3. 相似项目检索
 4. 任务失败重试
 5. 更完整的内部 Workbench 操作体验
+```
+
+### V5：产品入口与调度执行
+
+```text
+1. SQLite + Prisma schema / migration
+2. DB-backed project list/detail
+3. 两步创建项目与输入上传
+4. 输入确认与 locked input 记录
+5. Chain registry，P0 只启用 chat_dialogue_mv
+6. Server 内置 runner loop
+7. Timing pipeline task handlers
+8. chat_dialogue_mv task handlers
+9. 最小内部 Workbench
+10. V5 E2E 与 TEST_REPORT.v5
 ```
 
 ---

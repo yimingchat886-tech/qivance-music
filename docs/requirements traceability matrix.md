@@ -14,6 +14,7 @@ Sources:
 - V4 chat-chain PRD: `docs/qivance_music_chat_dialogue_mv_chain_prd.md`
 - V4 SPEC / PLAN: `docs/SPEC.v4.md`, `docs/PLAN.v4.md`
 - V4 report: `docs/TEST_REPORT.v4.md`
+- V5 PRD: `docs/qivance_music_html_video_integration_prd.v5.md`
 
 Latest evidence commits:
 - `e67e223` - source-video Workbench contracts
@@ -28,6 +29,7 @@ Status legend:
 - `部分实现`: useful implementation exists, but it is not the full product requirement.
 - `未实现`: no production implementation in the current repo.
 - `暂缓`: explicitly outside V2/V3 scope.
+- `规划中`: captured in PRD, not implemented yet.
 
 | 需求域 | 关联需求 | V2 当前实现与验收 | V3 当前实现与验收 | 仍未实现 / 后续范围 | 主要证据 |
 |---|---|---|---|---|---|
@@ -47,9 +49,9 @@ Status legend:
 | 三比例回归 | R16, R47-R53, V3-R9 | 已实现并验收：V2 portrait 9:16、landscape 16:9、square 1:1 media/export E2E 通过。 | 已实现并验收：V3 保留 production-strict three-ratio regression，不允许 cached/seeded imagegen、fallback frames、missing review decisions、diagnostic-only mode 计入成功。 | 无 V3 P0 gap；CI 仍以 mocked deps 为主，live external deps 仍是本地 E2E。 | `scripts/e2e-media-v3-regression.ts`; `docs/TEST_REPORT.v3.md`; `projects/v3_media_regression_20260612135609/` |
 | Legacy removal / vendor integration | R6-R12, R44-R46 | 已实现：根项目使用 pnpm workspace 解析 vendor html-video packages；旧 `hypeframes/**` 和 legacy backend 不参与 runtime；strict duration 不改 core public schema。 | 已实现：V3 继续使用 vendor html-video + Qivance wrappers，额外更新 runtime Codex `workspace-write` sandbox。 | 无 V3 P0 gap；后续 vendor 升级仍需单独验证。 | `vendor/html-video`; `package.json`; `src/lib/video-html/qivance-hyperframes-strict-adapter.ts`; `vendor/html-video` submodule commit `3d2ce46` |
 | Diagnostics / fallback policy | R31-R32, R94, V3-R9 | 部分实现：V2 允许 diagnostic fallback 并在 manifest 中显式记录；V2 不把它当 AI-authoring 稳定性证据。 | 已实现并验收：V3 production gate 遇到 timeout、non-zero exit、missing AI frames、fallback、forbidden changes、invalid frames 直接失败；diagnostic fallback 需要显式 flag 且不计入 production success。 | 更完整重试/队列/恢复机制未实现。 | `src/lib/media-e2e/workflow.ts`; `tests/media-e2e-workflow.test.ts`; `tests/html-video-agent-production-gate.test.ts` |
-| Upstream content chain | R54-R60, R63-R65, R80-R87 | 未实现或暂缓：Obsidian import、source capsule、RAG recycle、DeepSeek lyrics、MiniMax music、active take selection UI、audio analysis API、SaaS/Tailscale/Cloudflare Access 不在当前 V2 E2E 完成范围。 | 暂缓：V3 明确不做上游创建/生成链路，只消费已有 project/fixture 和 source MP4。 | 这些仍是后续版本主要未实现范围。 | `docs/qivance_music_html_video_integration_prd.v3.md`; `docs/PLAN.v3.md`; `docs/TEST_REPORT.v3.md` |
+| Upstream content chain | R54-R60, R63-R65, R80-R87 | 未实现或暂缓：Obsidian import、source capsule、RAG recycle、DeepSeek lyrics、MiniMax music、active take selection UI、audio analysis API、SaaS/Tailscale/Cloudflare Access 不在当前 V2 E2E 完成范围。 | 暂缓：V3 明确不做上游创建/生成链路，只消费已有 project/fixture 和 source MP4。 | Obsidian/RAG/DeepSeek/MiniMax/active take/audio analysis API 仍是后续范围；SaaS 已在 V5 取消，Cloudflare/Tailscale/登录权限不进 V5。 | `docs/qivance_music_html_video_integration_prd.v3.md`; `docs/PLAN.v3.md`; `docs/TEST_REPORT.v3.md` |
 | Templates / advanced editor | R41-R43, R76-R78 | 未实现或部分内部可用：html-video Studio 作为内部 debug，模板选择/模板管理/资源包未产品化。 | 暂缓：V3 不暴露 html-video Studio 生产 UI，不做模板编辑器、元素点选、源码编辑、timeline editor、`resources.zip`。 | Qivance rap teaching template productization、template selection rules、resources packaging 仍未实现。 | `docs/PLAN.v3.md`; `docs/SPEC.v3.md` |
-| 安全 / 权限 / SaaS | R1, R79-R83 | 未实现或暂缓：登录、权限、Tailscale、Cloudflare Access、SaaS、复杂项目权限未实现。 | 暂缓：V3 只做本地基础工作台和 API，不实现复杂权限或 SaaS。 | 内部访问控制、用户体系、权限模型、SaaS 化仍未实现。 | V3 Non-Goals in `docs/qivance_music_html_video_integration_prd.v3.md` |
+| 安全 / 权限 / SaaS | R1, R79-R83 | 未实现或暂缓：登录、权限、Tailscale、Cloudflare Access、SaaS、复杂项目权限未实现。 | 暂缓：V3 只做本地基础工作台和 API，不实现复杂权限或 SaaS。 | 登录、用户体系、复杂权限、Cloudflare Access/Tailscale 延后；SaaS 已在 V5 取消，不再作为产品方向。 | V3 Non-Goals in `docs/qivance_music_html_video_integration_prd.v3.md`; `docs/qivance_music_html_video_integration_prd.v5.md` |
 | 证据与验收 | all V2/V3 P0 evidence | 已实现并验收：V2 report 记录 media/export 三比例结果与 caveat。 | 已实现并验收：V3 report 记录 focused tests、typecheck、primary product E2E、three-ratio regression、source-video E2E、artifact paths 和 no open V3 P0 gap。 | 后续版本应新增对应 TEST_REPORT，而不是覆盖 V2/V3 evidence。 | `docs/TEST_REPORT.v2.md`; `docs/TEST_REPORT.v3.md`; `docs/requirements traceability matrix.md` |
 
 ## V4 Addendum
@@ -66,9 +68,26 @@ Branch: `codex/v4-plan`
 | Render/export manifest v4 | chain-specific export evidence | 已实现并验收：manifest schema_version 4、chain id、input/output sha evidence、HTML frame render evidence、QA audio stream count/duration drift、production gate validation。 | 持久化后台 worker 暂缓；local API/script render 可产出 chain-specific export evidence。 | `src/lib/export/render-manifest-v4.ts`; `tests/render-manifest-v4.test.ts`; `docs/TEST_REPORT.v4.md` |
 | V3 regression safety | no regression to html-video contracts | 已验证：V4 session reran focused html-video coverage and typecheck; html-video server test requires local port escalation and passed separately。 | 未重跑 live V3 image-generation production-strict regression；原因是该路径耗时且调用外部 live deps。 | `tests/html-video-*.test.ts`; `docs/TEST_REPORT.v4.md` |
 
+## V5 Addendum
+
+Date: 2026-06-15
+Branch: `codex/v4-plan`
+
+| 需求域 | V5 关联需求 | V5 目标范围 | 当前实现状态 | 主要证据 |
+|---|---|---|---|---|
+| 产品入口 / 项目创建 | V5 two-step project creation, upload lyrics/audio, confirm inputs | 两步创建：`POST /api/projects` 创建空项目，`POST /api/projects/:id/inputs` 上传歌词和音频，`confirm inputs` 后才启动 scheduler。 | 规划中：V3/V4 只能打开已有 project/fixture；V5 需要新增 DB-backed 创建和上传入口。 | `docs/qivance_music_html_video_integration_prd.v5.md` |
+| SQLite + Prisma 控制面 | Project/Input/Artifact/Chain/Run/Task/Event models | SQLite + Prisma 作为内部控制面；媒体文件和 JSON artifacts 仍保存在项目目录，DB 记录 path、sha、status、run/task/event。 | 规划中：当前 V2-V4 以 file-system 为权威状态，未引入 DB/Prisma。 | `docs/qivance_music_html_video_integration_prd.v5.md` |
+| 输入确认与替换 | input_uploaded, input_confirmed, replace=true | 上传时校验格式/sha；用户确认后锁定输入并自动排队；运行中禁止替换；停止后可显式 `replace=true`，旧 artifacts 标记 stale。 | 规划中：V3/V4 有输入诊断和 artifact 合同，但没有上传确认/替换状态机。 | `docs/qivance_music_html_video_integration_prd.v5.md` |
+| Server 内置 runner loop | persistent local scheduler execution | Node server 启动内置 runner loop，扫描 queued/ready task，按资源锁执行，支持 graceful stop 和重启恢复。 | 规划中：V4 已有 scheduler plan/run_queue/resource locks/local tick，但没有 server 内置持续执行 loop。 | `src/lib/scheduler/*`; `docs/qivance_music_html_video_integration_prd.v5.md` |
+| 自动 timing pipeline | upload lyrics/audio -> timing bundle | 用户确认输入后自动跑 timing pipeline，产出 beat/onset/energy/word timing/alignment/section map，再进入 chat chain。 | 规划中：V2/V4 能消费或生成 timing 证据，但还没有从上传入口自动触发的产品化链路。 | `docs/qivance_music_html_video_integration_prd.v5.md`; `src/lib/chat-dialogue/*` |
+| Chain registry | extensible chain registry, P0 chat only | 做可扩展 registry；V5 P0 只启用 `chat_dialogue_mv`；`image_storyboard_mv` 从后续产品路线删除；`video_chain` 下一版本再做。 | 规划中：V4 scheduler 可表示多链路，但 registry 产品边界和链路方向需要 V5 落地。 | `docs/qivance_music_html_video_integration_prd.v5.md`; `docs/PLAN.v4.md` |
+| 最小内部 Workbench | create/upload/confirm/run/stop/download | Node-served 内部页面支持创建项目、上传输入、确认、查看 run/task/event、graceful stop、下载 final MP4。 | 规划中：V3/V4 Workbench 展示已有项目和链路状态，但没有上传入口与 DB-backed run 控制台。 | `src/lib/workbench/workbench-html.ts`; `docs/qivance_music_html_video_integration_prd.v5.md` |
+| 延后 / 取消范围 | internal-only product boundary | SaaS 取消；登录、用户体系、复杂权限、Cloudflare Access/Tailscale、模板资源产品化、DeepSeek/MiniMax、video_chain 均不进 V5 P0。 | 规划中并作为范围约束：防止 v5 被扩张为完整 SaaS 或模板产品化版本。 | `docs/qivance_music_html_video_integration_prd.md`; `docs/qivance_music_html_video_integration_prd.v5.md` |
+
 ## Acceptance Summary
 
 - V2 验收结论：media/export 合同已通过三比例验收；V2 不再作为 AI-authored frame 稳定性的最终证据，因为 fallback/timeout 是诊断路径。
 - V3 验收结论：V3 P0 生产工作台/API 闭环已通过；primary product flow、source-video product flow、three-ratio production-strict regression 均有本地 artifact 证据。
-- V4 验收结论：V4 调度器计划/队列/execution tick/API/Workbench 可视化和 chat-dialogue 文件合同已通过 focused tests、typecheck、scheduler E2E 和 chat-dialogue E2E；持久化 daemon、分布式 worker、数据库化、SaaS 权限和上游内容生成仍是后续范围。
-- 未实现结论：剩余未实现项集中在上游内容生产、项目/用户/权限/SaaS、最终视觉设计、模板/高级编辑器、RAG recycle、数据库化和资源打包，均不是当前 V3 P0 阻塞项。
+- V4 验收结论：V4 调度器计划/队列/execution tick/API/Workbench 可视化和 chat-dialogue 文件合同已通过 focused tests、typecheck、scheduler E2E 和 chat-dialogue E2E；持久化 daemon、分布式 worker、数据库化、登录/权限/Cloudflare/Tailscale 和上游内容生成仍是后续范围；SaaS 在 V5 决策中取消。
+- V5 规划结论：下一步聚焦内部上传入口、SQLite + Prisma 控制面、server 内置 runner loop、自动 timing 和 chat_dialogue_mv；SaaS 取消，模板资源产品化延后，`image_storyboard_mv` 从后续产品路线删除，`video_chain` 下一版本再做。
+- 未实现结论：剩余未实现项集中在 V5 产品入口/数据库/runner loop、后续 video_chain、最终视觉设计、高级编辑器、RAG recycle 和资源打包；SaaS 不再作为产品方向。
