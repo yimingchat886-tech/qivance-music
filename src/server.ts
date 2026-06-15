@@ -1,11 +1,14 @@
 import { createReadStream } from "node:fs";
+import { execFile } from "node:child_process";
 import { copyFile, mkdir, readdir, readFile, stat, writeFile } from "node:fs/promises";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { networkInterfaces } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { promisify } from "node:util";
 import { ProjectStore, type Project } from "@html-video/core";
 import { muxLockedAudio } from "./lib/export/mux-locked-audio.ts";
+import { buildRenderManifestV4, validateRenderManifestV4, type RenderManifestV4EvidenceRef } from "./lib/export/render-manifest-v4.ts";
 import {
   buildRenderManifestV3,
   validateRenderManifestV3,
@@ -66,12 +69,25 @@ import type {
   V3ProjectListResponse,
 } from "./lib/workbench/api-types.ts";
 import { readWorkbenchProjectStatus, type WorkbenchProjectStatus } from "./lib/workbench/project-status.ts";
-import { renderWorkbenchProjectDetailPage, renderWorkbenchProjectsPage } from "./lib/workbench/workbench-html.ts";
+import { renderWorkbenchProjectDetailPage, renderWorkbenchProjectsPage, type WorkbenchChainSummary } from "./lib/workbench/workbench-html.ts";
+import { createSchedulerRun, readRunQueue } from "./lib/scheduler/run-queue.ts";
+import { cancelSchedulerRun } from "./lib/scheduler/scheduler-runner.ts";
+import { readSchedulerStatus } from "./lib/scheduler/scheduler-status.ts";
+import { parseSchedulerRunRequest, type SchedulerRunRequest } from "./lib/scheduler/scheduler-types.ts";
+import { buildChatAnimationPlan, validateChatAnimationPlan, writeChatAnimationPlan, type ChatAnimationPlan } from "./lib/chat-dialogue/chat-animation-plan.ts";
+import { buildChatFrameContracts, validateChatFrameContracts, writeChatFrameContracts, type ChatFrameContracts } from "./lib/chat-dialogue/chat-frame-contracts.ts";
+import { renderChatFrameHtml, validateChatFrameHtml, writeChatFrameHtml } from "./lib/chat-dialogue/chat-frame-html.ts";
+import { renderChatFramesToVisual } from "./lib/chat-dialogue/chat-frame-renderer.ts";
+import { buildConversationPlan, validateConversationPlan, writeConversationPlan, type ConversationPlan } from "./lib/chat-dialogue/conversation-plan.ts";
+import { writeLyricsLineMap, validateLyricsLineMap, type LyricsLineMap } from "./lib/chat-dialogue/lyrics-line-map.ts";
+import { buildSpeakerAttribution, validateSpeakerAttribution, writeSpeakerAttribution, type SpeakerAttribution } from "./lib/chat-dialogue/speaker-attribution.ts";
+import type { LyricWordTiming, SectionMapLike } from "./lib/chat-dialogue/line-timing.ts";
 
 const rootDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const storageRoot = process.env.QIVANCE_PROJECTS_ROOT ?? path.join(rootDir, "projects");
 const port = Number(process.env.PORT ?? 3000);
 const host = process.env.HOST?.trim() || "0.0.0.0";
+const execFileAsync = promisify(execFile);
 
 await mkdir(storageRoot, { recursive: true });
 
@@ -114,8 +130,12 @@ async function route(request: IncomingMessage, response: ServerResponse): Promis
   const projectPageMatch = url.pathname.match(/^\/projects\/([^/]+)$/);
   if (request.method === "GET" && projectPageMatch) {
     const paths = await resolveExistingProjectPaths(projectPageMatch[1]);
-    const status = await readWorkbenchProjectStatus({ storageRoot, smallProjectId: paths.smallProjectId });
-    sendHtml(response, renderWorkbenchProjectDetailPage({ status }));
+    const [status, schedulerStatus, chains] = await Promise.all([
+      readWorkbenchProjectStatus({ storageRoot, smallProjectId: paths.smallProjectId }),
+      readSchedulerStatus(storageRoot),
+      workbenchChainSummaries(paths),
+    ]);
+    sendHtml(response, renderWorkbenchProjectDetailPage({ status, schedulerStatus, chains }));
     return;
   }
 
@@ -136,6 +156,106 @@ async function route(request: IncomingMessage, response: ServerResponse): Promis
   if (request.method === "GET" && statusMatch) {
     const paths = await resolveExistingProjectPaths(statusMatch[1]);
     sendJson(response, await readWorkbenchProjectStatus({ storageRoot, smallProjectId: paths.smallProjectId }));
+    return;
+  }
+
+  const chainsMatch = url.pathname.match(/^\/api\/projects\/([^/]+)\/chains$/);
+  if (request.method === "GET" && chainsMatch) {
+    const paths = await resolveExistingProjectPaths(chainsMatch[1]);
+    sendJson(response, await projectChainsResponse(paths));
+    return;
+  }
+
+  const chatChainStatusMatch = url.pathname.match(/^\/api\/projects\/([^/]+)\/chains\/chat-dialogue-mv\/status$/);
+  if (request.method === "GET" && chatChainStatusMatch) {
+    const paths = await resolveExistingProjectPaths(chatChainStatusMatch[1]);
+    sendJson(response, await chatDialogueChainStatusResponse(paths));
+    return;
+  }
+
+  const chatChainRunMatch = url.pathname.match(/^\/api\/projects\/([^/]+)\/chains\/chat-dialogue-mv\/run$/);
+  if (request.method === "POST" && chatChainRunMatch) {
+    const paths = await resolveExistingProjectPaths(chatChainRunMatch[1]);
+    const body = await readJsonRequestBody(request);
+    sendJson(response, await createSchedulerRunResponse(schedulerRunRequestFromBody(body, [paths.smallProjectId], ["chat_dialogue_mv"])), 202);
+    return;
+  }
+
+  const chatBuildConversationMatch = url.pathname.match(/^\/api\/projects\/([^/]+)\/chains\/chat-dialogue-mv\/build-conversation-plan$/);
+  if (request.method === "POST" && chatBuildConversationMatch) {
+    const paths = await resolveExistingProjectPaths(chatBuildConversationMatch[1]);
+    sendJson(response, await buildChatConversationPlanForProject(paths));
+    return;
+  }
+
+  const chatBuildFramesMatch = url.pathname.match(/^\/api\/projects\/([^/]+)\/chains\/chat-dialogue-mv\/build-frames$/);
+  if (request.method === "POST" && chatBuildFramesMatch) {
+    const paths = await resolveExistingProjectPaths(chatBuildFramesMatch[1]);
+    sendJson(response, await buildChatFramesForProject(paths));
+    return;
+  }
+
+  const chatPreviewMatch = url.pathname.match(/^\/api\/projects\/([^/]+)\/chains\/chat-dialogue-mv\/preview$/);
+  if (request.method === "GET" && chatPreviewMatch) {
+    const paths = await resolveExistingProjectPaths(chatPreviewMatch[1]);
+    sendJson(response, await chatDialoguePreviewResponse(paths));
+    return;
+  }
+
+  const chatRevisionMatch = url.pathname.match(/^\/api\/projects\/([^/]+)\/chains\/chat-dialogue-mv\/revise$/);
+  if (request.method === "POST" && chatRevisionMatch) {
+    const paths = await resolveExistingProjectPaths(chatRevisionMatch[1]);
+    const body = await readJsonRequestBody(request);
+    sendJson(response, await reviseChatDialogueChain(paths, body));
+    return;
+  }
+
+  const chatExportRenderMatch = url.pathname.match(/^\/api\/projects\/([^/]+)\/chains\/chat-dialogue-mv\/export\/render$/);
+  if (request.method === "POST" && chatExportRenderMatch) {
+    const paths = await resolveExistingProjectPaths(chatExportRenderMatch[1]);
+    sendJson(response, await renderChatDialogueExportForProject(paths));
+    return;
+  }
+
+  const chatFinalMp4Match = url.pathname.match(/^\/api\/projects\/([^/]+)\/chains\/chat-dialogue-mv\/export\/final\.mp4$/);
+  if (request.method === "GET" && chatFinalMp4Match) {
+    const paths = await resolveExistingProjectPaths(chatFinalMp4Match[1]);
+    await sendApiFile(response, path.join(paths.projectRoot, "exports/chat_dialogue_mv/final.mp4"), "video/mp4");
+    return;
+  }
+
+  if (request.method === "GET" && url.pathname === "/api/scheduler/status") {
+    sendJson(response, await readSchedulerStatus(storageRoot));
+    return;
+  }
+
+  if (request.method === "GET" && url.pathname === "/api/scheduler/runs") {
+    sendJson(response, await readRunQueue(storageRoot));
+    return;
+  }
+
+  if (request.method === "POST" && url.pathname === "/api/scheduler/runs") {
+    const body = await readJsonRequestBody(request);
+    const parsed = parseSchedulerRunRequest(body);
+    if (!parsed.request) throw new ApiRouteError(400, "invalid_scheduler_run_request", parsed.issues.join("; "));
+    await assertSchedulerProjectsExist(parsed.request.project_ids);
+    sendJson(response, await createSchedulerRunResponse(parsed.request), 202);
+    return;
+  }
+
+  const schedulerRunMatch = url.pathname.match(/^\/api\/scheduler\/runs\/([^/]+)$/);
+  if (request.method === "GET" && schedulerRunMatch) {
+    const runId = decodeURIComponent(schedulerRunMatch[1]);
+    assertSafeRouteId(runId, "run id");
+    sendJson(response, await schedulerRunDetailResponse(runId));
+    return;
+  }
+
+  const schedulerCancelMatch = url.pathname.match(/^\/api\/scheduler\/runs\/([^/]+)\/cancel$/);
+  if (request.method === "POST" && schedulerCancelMatch) {
+    const runId = decodeURIComponent(schedulerCancelMatch[1]);
+    assertSafeRouteId(runId, "run id");
+    sendJson(response, await cancelSchedulerRunResponse(runId));
     return;
   }
 
@@ -399,6 +519,483 @@ async function approveAnimationPlan(paths: SmallProjectPaths, body: Record<strin
     },
   });
   return approval;
+}
+
+async function projectChainsResponse(paths: SmallProjectPaths): Promise<Record<string, unknown>> {
+  return {
+    small_project_id: paths.smallProjectId,
+    chains: [
+      await chatDialogueChainStatusResponse(paths),
+    ],
+  };
+}
+
+async function workbenchChainSummaries(paths: SmallProjectPaths): Promise<WorkbenchChainSummary[]> {
+  const response = await projectChainsResponse(paths);
+  if (!Array.isArray(response.chains)) return [];
+  return response.chains.filter(isWorkbenchChainSummary);
+}
+
+function isWorkbenchChainSummary(value: unknown): value is WorkbenchChainSummary {
+  if (!isRecord(value)) return false;
+  if (typeof value.chain_id !== "string" || typeof value.status !== "string") return false;
+  if (value.mode !== undefined && typeof value.mode !== "string") return false;
+  if (value.blocking_reasons !== undefined && !Array.isArray(value.blocking_reasons)) return false;
+  if (value.artifacts !== undefined && !isWorkbenchFileRefMap(value.artifacts)) return false;
+  if (value.metrics !== undefined && !isWorkbenchMetricMap(value.metrics)) return false;
+  return true;
+}
+
+function isWorkbenchFileRefMap(value: unknown): value is Record<string, { exists: boolean; path?: string; sha256?: string }> {
+  if (!isRecord(value)) return false;
+  return Object.values(value).every((item) => {
+    if (!isRecord(item) || typeof item.exists !== "boolean") return false;
+    if (item.path !== undefined && typeof item.path !== "string") return false;
+    if (item.sha256 !== undefined && typeof item.sha256 !== "string") return false;
+    return true;
+  });
+}
+
+function isWorkbenchMetricMap(value: unknown): value is Record<string, string | number | boolean> {
+  if (!isRecord(value)) return false;
+  return Object.values(value).every((item) =>
+    typeof item === "string" || typeof item === "number" || typeof item === "boolean"
+  );
+}
+
+async function chatDialogueChainStatusResponse(paths: SmallProjectPaths): Promise<Record<string, unknown>> {
+  const chainStatus = await readOptionalRecord(path.join(paths.projectRoot, "data/chains/chat_dialogue_mv/chain_status.json"));
+  const [speakerAttribution, conversationPlan, frameContracts] = await Promise.all([
+    readOptionalRecord(path.join(paths.projectRoot, "data/chains/chat_dialogue_mv/speaker_attribution.json")),
+    readOptionalRecord(path.join(paths.projectRoot, "data/chains/chat_dialogue_mv/conversation_plan.json")),
+    readOptionalRecord(path.join(paths.projectRoot, "data/chains/chat_dialogue_mv/frame_contracts.json")),
+  ]);
+  const lyricsExists = await projectFileExists(paths.projectRoot, "lyrics.md");
+  const audioExists = await projectFileExists(paths.projectRoot, "active_music_take.mp3") || await projectFileExists(paths.projectRoot, projectAudioRelativePath(paths));
+  const timingExists = await projectFileExists(paths.projectRoot, "data/timing/lyric_word_timing.json")
+    && await projectFileExists(paths.projectRoot, "data/timing/section_map.json");
+  const blockingReasons = [];
+  if (!lyricsExists) blockingReasons.push({ code: "lyrics_missing", message: "lyrics.md is required for chat dialogue MV.", retryable: true });
+  if (!audioExists) blockingReasons.push({ code: "audio_missing", message: "active_music_take.mp3 or locked master audio is required.", retryable: true });
+  if (!timingExists) blockingReasons.push({ code: "timing_missing", message: "lyric_word_timing.json and section_map.json are required for production chat timing.", retryable: true });
+  return {
+    chain_id: "chat_dialogue_mv",
+    status: stringBodyValue(chainStatus?.status) ?? (blockingReasons.length > 0 ? "timing_blocked" : "input_ready"),
+    mode: stringBodyValue(chainStatus?.mode) ?? "production",
+    blocking_reasons: Array.isArray(chainStatus?.blocking_reasons) ? chainStatus.blocking_reasons : blockingReasons,
+    metrics: isWorkbenchMetricMap(chainStatus?.metrics) ? chainStatus.metrics : chatDialogueChainMetrics({ speakerAttribution, conversationPlan, frameContracts }),
+    artifacts: isRecord(chainStatus?.artifacts) ? chainStatus.artifacts : {
+      lyrics_line_map: await artifactExists(paths.projectRoot, "data/chains/chat_dialogue_mv/lyrics_line_map.json"),
+      speaker_attribution: await artifactExists(paths.projectRoot, "data/chains/chat_dialogue_mv/speaker_attribution.json"),
+      conversation_plan: await artifactExists(paths.projectRoot, "data/chains/chat_dialogue_mv/conversation_plan.json"),
+      frame_contracts: await artifactExists(paths.projectRoot, "data/chains/chat_dialogue_mv/frame_contracts.json"),
+      render_manifest: await artifactExists(paths.projectRoot, "exports/chat_dialogue_mv/render_manifest.json"),
+      final_mp4: await artifactExists(paths.projectRoot, "exports/chat_dialogue_mv/final.mp4"),
+    },
+  };
+}
+
+function chatDialogueChainMetrics(input: {
+  speakerAttribution: Record<string, unknown> | null;
+  conversationPlan: Record<string, unknown> | null;
+  frameContracts: Record<string, unknown> | null;
+}): Record<string, string | number | boolean> {
+  const frames = Array.isArray(input.frameContracts?.frames) ? input.frameContracts.frames : [];
+  return {
+    low_confidence_speaker_count: finiteNumberValue(input.speakerAttribution?.low_confidence_count) ?? 0,
+    conversation_message_count: Array.isArray(input.conversationPlan?.messages) ? input.conversationPlan.messages.length : 0,
+    frame_count: frames.length,
+    frame_validation_status: frames.length > 0 ? "ready" : "missing",
+  };
+}
+
+async function buildChatConversationPlanForProject(paths: SmallProjectPaths): Promise<Record<string, unknown>> {
+  const lineMapResult = await writeLyricsLineMap({ projectRoot: paths.projectRoot });
+  assertValidation("lyrics_line_map_invalid", validateLyricsLineMap(lineMapResult.lineMap));
+  const speakerResult = await writeSpeakerAttribution({
+    projectRoot: paths.projectRoot,
+    lineMap: lineMapResult.lineMap,
+    lineMapSha256: lineMapResult.lineMap.source.lyrics_sha256,
+  });
+  assertValidation("speaker_attribution_invalid", validateSpeakerAttribution({
+    lineMap: lineMapResult.lineMap,
+    speakerAttribution: speakerResult.speakerAttribution,
+  }));
+  const lyricWordTiming = await readRequiredProjectJson<LyricWordTiming>(
+    paths,
+    "data/timing/lyric_word_timing.json",
+    "chat_timing_missing",
+    "data/timing/lyric_word_timing.json is required for chat dialogue production timing.",
+  );
+  const sectionMap = await readRequiredProjectJson<SectionMapLike>(
+    paths,
+    "data/timing/section_map.json",
+    "chat_section_map_missing",
+    "data/timing/section_map.json is required for chat dialogue production timing.",
+  );
+  const audioPath = await chatDialogueAudioRelativePath(paths);
+  const result = buildConversationPlan({
+    lineMap: lineMapResult.lineMap,
+    speakerAttribution: speakerResult.speakerAttribution,
+    lyricWordTiming,
+    sectionMap,
+    lyricsPath: "lyrics.md",
+    audioPath,
+    lyricsSha256: lineMapResult.lineMap.source.lyrics_sha256,
+    audioSha256: await sha256File(path.join(paths.projectRoot, audioPath)),
+    allowDiagnosticFallback: false,
+  });
+  if (!result.conversationPlan) throw new ApiRouteError(409, "conversation_plan_invalid", result.issues.join("; "));
+  assertValidation("conversation_plan_invalid", validateConversationPlan({
+    conversationPlan: result.conversationPlan,
+    lineMap: lineMapResult.lineMap,
+    speakerAttribution: speakerResult.speakerAttribution,
+  }));
+  const conversationPath = (await writeConversationPlan({ projectRoot: paths.projectRoot, conversationPlan: result.conversationPlan })).path;
+  await writeChatDialogueChainStatus(paths, "conversation_ready", {
+    low_confidence_speaker_count: speakerResult.speakerAttribution.low_confidence_count,
+    conversation_message_count: result.conversationPlan.messages.length,
+    frame_count: 0,
+    frame_validation_status: "missing",
+  });
+  return {
+    small_project_id: paths.smallProjectId,
+    chain_id: "chat_dialogue_mv",
+    artifacts: {
+      lyrics_line_map: await chatFileRef(paths, lineMapResult.path),
+      speaker_attribution: await chatFileRef(paths, speakerResult.path),
+      conversation_plan: await chatFileRef(paths, conversationPath),
+    },
+    metrics: {
+      low_confidence_speaker_count: speakerResult.speakerAttribution.low_confidence_count,
+      conversation_message_count: result.conversationPlan.messages.length,
+    },
+  };
+}
+
+async function buildChatFramesForProject(paths: SmallProjectPaths): Promise<Record<string, unknown>> {
+  const conversationPlan = await readRequiredProjectJson<ConversationPlan>(
+    paths,
+    "data/chains/chat_dialogue_mv/conversation_plan.json",
+    "conversation_plan_missing",
+    "Build conversation_plan.json before building chat frames.",
+  );
+  const sectionMap = await readRequiredProjectJson<SectionMapLike>(
+    paths,
+    "data/timing/section_map.json",
+    "chat_section_map_missing",
+    "data/timing/section_map.json is required for chat frame timing.",
+  );
+  const lineMap = await readRequiredProjectJson<LyricsLineMap>(
+    paths,
+    "data/chains/chat_dialogue_mv/lyrics_line_map.json",
+    "lyrics_line_map_missing",
+    "Build lyrics_line_map.json before building chat frames.",
+  );
+  const speakerAttribution = await readRequiredProjectJson<SpeakerAttribution>(
+    paths,
+    "data/chains/chat_dialogue_mv/speaker_attribution.json",
+    "speaker_attribution_missing",
+    "Build speaker_attribution.json before building chat frames.",
+  );
+  assertValidation("conversation_plan_invalid", validateConversationPlan({ conversationPlan, lineMap, speakerAttribution }));
+  const animationPlan = buildChatAnimationPlan({ conversationPlan, durationSec: sectionMap.duration_sec });
+  assertValidation("chat_animation_plan_invalid", validateChatAnimationPlan({ conversationPlan, animationPlan }));
+  const animationPath = (await writeChatAnimationPlan({ projectRoot: paths.projectRoot, animationPlan })).path;
+  const frameContracts = buildChatFrameContracts({ projectId: paths.smallProjectId, conversationPlan, animationPlan });
+  assertValidation("chat_frame_contracts_invalid", validateChatFrameContracts({ conversationPlan, frameContracts }));
+  const frameContractsPath = (await writeChatFrameContracts({ projectRoot: paths.projectRoot, frameContracts })).path;
+  for (const frame of frameContracts.frames) {
+    const html = renderChatFrameHtml({ frame, conversationPlan });
+    assertValidation("chat_frame_html_invalid", validateChatFrameHtml(html));
+    await writeChatFrameHtml({ htmlPath: path.join(paths.projectRoot, frame.html_path), frame, conversationPlan });
+  }
+  await writeChatDialogueChainStatus(paths, "frames_ready", {
+    low_confidence_speaker_count: speakerAttribution.low_confidence_count,
+    conversation_message_count: conversationPlan.messages.length,
+    frame_count: frameContracts.frames.length,
+    frame_validation_status: "ready",
+  });
+  return {
+    small_project_id: paths.smallProjectId,
+    chain_id: "chat_dialogue_mv",
+    artifacts: {
+      animation_plan: await chatFileRef(paths, animationPath),
+      frame_contracts: await chatFileRef(paths, frameContractsPath),
+    },
+    frames: frameContracts.frames.map((frame) => ({
+      frame_id: frame.frame_id,
+      html_path: frame.html_path,
+      duration_sec: frame.duration_sec,
+    })),
+  };
+}
+
+async function chatDialoguePreviewResponse(paths: SmallProjectPaths): Promise<Record<string, unknown>> {
+  const frameContracts = await readRequiredProjectJson<ChatFrameContracts>(
+    paths,
+    "data/chains/chat_dialogue_mv/frame_contracts.json",
+    "frame_contracts_missing",
+    "Build chat frames before requesting preview.",
+  );
+  return {
+    small_project_id: paths.smallProjectId,
+    chain_id: "chat_dialogue_mv",
+    frames: frameContracts.frames.map((frame) => ({
+      frame_id: frame.frame_id,
+      html_path: frame.html_path,
+      duration_sec: frame.duration_sec,
+    })),
+  };
+}
+
+async function reviseChatDialogueChain(paths: SmallProjectPaths, body: Record<string, unknown>): Promise<Record<string, unknown>> {
+  const request = stringBodyValue(body.request);
+  if (!request) throw new ApiRouteError(400, "invalid_chat_revision_request", "request is required.");
+  const revision = {
+    schema_version: 1,
+    chain_id: "chat_dialogue_mv",
+    revision_id: `chat_revision_${new Date().toISOString().replaceAll(/[^0-9]+/g, "").slice(0, 14)}`,
+    request,
+    scope: recordBodyValue(body.scope) ?? { type: "chain" },
+    status: "requested",
+    created_at: new Date().toISOString(),
+  };
+  const relativePath = "data/chains/chat_dialogue_mv/revision_request.json";
+  await writeJson(path.join(paths.projectRoot, relativePath), revision);
+  return {
+    small_project_id: paths.smallProjectId,
+    chain_id: "chat_dialogue_mv",
+    revision_request: {
+      path: relativePath,
+      data: revision,
+    },
+  };
+}
+
+async function renderChatDialogueExportForProject(paths: SmallProjectPaths): Promise<Record<string, unknown>> {
+  const conversationPlan = await readRequiredProjectJson<ConversationPlan>(
+    paths,
+    "data/chains/chat_dialogue_mv/conversation_plan.json",
+    "conversation_plan_missing",
+    "Build conversation_plan.json before rendering chat dialogue export.",
+  );
+  const frameContracts = await readRequiredProjectJson<ChatFrameContracts>(
+    paths,
+    "data/chains/chat_dialogue_mv/frame_contracts.json",
+    "frame_contracts_missing",
+    "Build frame_contracts.json before rendering chat dialogue export.",
+  );
+  const visualRelativePath = "exports/chat_dialogue_mv/visual.mp4";
+  const finalRelativePath = "exports/chat_dialogue_mv/final.mp4";
+  const visualPath = path.join(paths.projectRoot, visualRelativePath);
+  const finalPath = path.join(paths.projectRoot, finalRelativePath);
+  const renderEvidence = await renderChatFramesToVisual({
+    projectRoot: paths.projectRoot,
+    frameContracts,
+    outputPath: visualPath,
+  });
+  const audioRelativePath = conversationPlan.source.audio_path || await chatDialogueAudioRelativePath(paths);
+  const audioPath = path.join(paths.projectRoot, audioRelativePath);
+  await muxLockedAudio({ visualMp4Path: visualPath, masterAudioPath: audioPath, finalMp4Path: finalPath });
+  const finalProbe = await ffprobeJson(finalPath);
+  const audioProbe = await ffprobeJson(audioPath);
+  const audioStreamCount = streamCount(finalProbe, "audio");
+  const durationDriftMs = Math.round(Math.abs(probeDurationSec(finalProbe) - probeDurationSec(audioProbe)) * 1000);
+  if (audioStreamCount !== 1) throw new ApiRouteError(409, "chat_export_audio_stream_invalid", `final.mp4 must have exactly one audio stream, got ${audioStreamCount}.`);
+  if (durationDriftMs > 150) throw new ApiRouteError(409, "chat_export_duration_drift", `final.mp4 duration drift ${durationDriftMs}ms exceeds 150ms.`);
+
+  const qaRelativePath = "data/chains/chat_dialogue_mv/qa_report.json";
+  await writeJson(path.join(paths.projectRoot, qaRelativePath), {
+    schema_version: 1,
+    chain_id: "chat_dialogue_mv",
+    status: "passed",
+    audio_stream_count: audioStreamCount,
+    duration_drift_ms: durationDriftMs,
+    ffprobe: finalProbe,
+    frame_renders: renderEvidence.frame_renders,
+  });
+  const manifest = buildRenderManifestV4({
+    mode: "production",
+    runId: `api_render_${new Date().toISOString().replaceAll(/[^0-9]+/g, "").slice(0, 14)}`,
+    conversationPlan: await evidenceRef(paths, "data/chains/chat_dialogue_mv/conversation_plan.json"),
+    frameContracts: await evidenceRef(paths, "data/chains/chat_dialogue_mv/frame_contracts.json"),
+    lyrics: await evidenceRef(paths, "lyrics.md"),
+    audio: await evidenceRef(paths, audioRelativePath),
+    timing: {
+      beat_grid: await evidenceRef(paths, "data/timing/beat_grid.json"),
+      onset_events: await evidenceRef(paths, "data/timing/onset_events.json"),
+      energy_curve: await evidenceRef(paths, "data/timing/energy_curve.json"),
+      lyric_word_timing: await evidenceRef(paths, "data/timing/lyric_word_timing.json"),
+      alignment_report: await evidenceRef(paths, "data/timing/alignment_report.json"),
+      section_map: await evidenceRef(paths, "data/timing/section_map.json"),
+    },
+    visual: await evidenceRef(paths, visualRelativePath),
+    final: await evidenceRef(paths, finalRelativePath),
+    ffprobe: finalProbe,
+    durationDriftMs,
+    audioStreamCount,
+    fallbackFramesUsed: false,
+    diagnosticOnly: false,
+    remoteResourcesUsed: false,
+  });
+  assertValidation("render_manifest_v4_invalid", validateRenderManifestV4(manifest));
+  const manifestRelativePath = "exports/chat_dialogue_mv/render_manifest.json";
+  await writeJson(path.join(paths.projectRoot, manifestRelativePath), manifest);
+  await writeChatDialogueChainStatus(paths, "passed", {
+    low_confidence_speaker_count: finiteNumberValue((await readOptionalRecord(path.join(paths.projectRoot, "data/chains/chat_dialogue_mv/speaker_attribution.json")))?.low_confidence_count) ?? 0,
+    conversation_message_count: conversationPlan.messages.length,
+    frame_count: frameContracts.frames.length,
+    frame_validation_status: "ready",
+  });
+  return {
+    small_project_id: paths.smallProjectId,
+    chain_id: "chat_dialogue_mv",
+    visual_mp4: await chatFileRef(paths, visualRelativePath),
+    final_mp4: await chatFileRef(paths, finalRelativePath),
+    render_manifest: {
+      path: manifestRelativePath,
+      data: manifest,
+    },
+    qa_report: await chatFileRef(paths, qaRelativePath),
+  };
+}
+
+async function writeChatDialogueChainStatus(paths: SmallProjectPaths, status: string, metrics: Record<string, string | number | boolean>): Promise<void> {
+  const relativePath = "data/chains/chat_dialogue_mv/chain_status.json";
+  await writeJson(path.join(paths.projectRoot, relativePath), {
+    schema_version: 1,
+    chain_id: "chat_dialogue_mv",
+    status,
+    mode: "production",
+    blocking_reasons: [],
+    metrics,
+    artifacts: {
+      lyrics_line_map: await artifactExists(paths.projectRoot, "data/chains/chat_dialogue_mv/lyrics_line_map.json"),
+      speaker_attribution: await artifactExists(paths.projectRoot, "data/chains/chat_dialogue_mv/speaker_attribution.json"),
+      conversation_plan: await artifactExists(paths.projectRoot, "data/chains/chat_dialogue_mv/conversation_plan.json"),
+      animation_plan: await artifactExists(paths.projectRoot, "data/chains/chat_dialogue_mv/animation_plan.json"),
+      frame_contracts: await artifactExists(paths.projectRoot, "data/chains/chat_dialogue_mv/frame_contracts.json"),
+      qa_report: await artifactExists(paths.projectRoot, "data/chains/chat_dialogue_mv/qa_report.json"),
+      render_manifest: await artifactExists(paths.projectRoot, "exports/chat_dialogue_mv/render_manifest.json"),
+      final_mp4: await artifactExists(paths.projectRoot, "exports/chat_dialogue_mv/final.mp4"),
+    },
+  });
+}
+
+async function chatDialogueAudioRelativePath(paths: SmallProjectPaths): Promise<string> {
+  if (await projectFileExists(paths.projectRoot, "active_music_take.mp3")) return "active_music_take.mp3";
+  const relativePath = projectAudioRelativePath(paths);
+  if (await projectFileExists(paths.projectRoot, relativePath)) return relativePath;
+  throw new ApiRouteError(409, "chat_audio_missing", "active_music_take.mp3 or locked master audio is required.");
+}
+
+async function chatFileRef(paths: SmallProjectPaths, relativePath: string): Promise<{ exists: true; path: string; sha256: string }> {
+  return {
+    exists: true,
+    path: relativePath,
+    sha256: await sha256File(path.join(paths.projectRoot, relativePath)),
+  };
+}
+
+function assertValidation(code: string, result: { ok: boolean; issues: string[] }): void {
+  if (!result.ok) throw new ApiRouteError(409, code, result.issues.join("; "));
+}
+
+async function ffprobeJson(filePath: string): Promise<Record<string, unknown>> {
+  const { stdout } = await execFileAsync("ffprobe", ["-v", "error", "-show_streams", "-show_format", "-of", "json", filePath], { maxBuffer: 20 * 1024 * 1024 });
+  return JSON.parse(stdout) as Record<string, unknown>;
+}
+
+function streamCount(probe: Record<string, unknown>, codecType: string): number {
+  return probeStreams(probe).filter((stream) => stream.codec_type === codecType).length;
+}
+
+function probeDurationSec(probe: Record<string, unknown>): number {
+  const format = isRecord(probe.format) ? probe.format : {};
+  const duration = Number(format.duration);
+  if (Number.isFinite(duration)) return duration;
+  const streamDuration = probeStreams(probe).map((stream) => Number(stream.duration)).find((value) => Number.isFinite(value));
+  if (streamDuration !== undefined) return streamDuration;
+  throw new ApiRouteError(409, "ffprobe_duration_missing", "ffprobe duration is missing.");
+}
+
+function probeStreams(probe: Record<string, unknown>): Array<Record<string, unknown>> {
+  return Array.isArray(probe.streams) ? probe.streams.filter(isRecord) : [];
+}
+
+async function createSchedulerRunResponse(request: SchedulerRunRequest): Promise<Record<string, unknown>> {
+  const created = await createSchedulerRun({ storageRoot, request });
+  return {
+    run: created.run,
+    plans: created.plans.map((plan) => ({
+      project_id: plan.project_id,
+      chains: plan.chains,
+      task_count: plan.tasks.length,
+      ready_task_count: plan.tasks.filter((task) => task.status === "ready").length,
+      blocked_task_count: plan.tasks.filter((task) => task.status === "blocked").length,
+      skipped_task_count: plan.tasks.filter((task) => task.status === "skipped").length,
+    })),
+  };
+}
+
+async function schedulerRunDetailResponse(runId: string): Promise<Record<string, unknown>> {
+  const queue = await readRunQueue(storageRoot);
+  const run = queue.runs.find((item) => item.run_id === runId);
+  if (!run) throw new ApiRouteError(404, "scheduler_run_not_found", "Scheduler run not found.");
+  const runFile = path.join(storageRoot, "scheduler", "project_runs", `${runId}.json`);
+  return {
+    run,
+    data: await readOptionalRecord(runFile),
+  };
+}
+
+async function cancelSchedulerRunResponse(runId: string): Promise<Record<string, unknown>> {
+  const result = await cancelSchedulerRun({ storageRoot, runId });
+  return {
+    run_id: runId,
+    cancelled_task_count: result.cancelledTasks.length,
+  };
+}
+
+async function assertSchedulerProjectsExist(projectIds: string[]): Promise<void> {
+  for (const projectId of projectIds) {
+    try {
+      await resolveExistingProjectPaths(encodeURIComponent(projectId));
+    } catch (error) {
+      if (error instanceof ApiRouteError) {
+        throw new ApiRouteError(error.status, "scheduler_project_invalid", `${projectId}: ${error.message}`);
+      }
+      throw error;
+    }
+  }
+}
+
+function schedulerRunRequestFromBody(body: Record<string, unknown>, projectIds: string[], chains: string[]): SchedulerRunRequest {
+  const parsed = parseSchedulerRunRequest({
+    ...body,
+    project_ids: projectIds,
+    chains,
+  });
+  if (!parsed.request) throw new ApiRouteError(400, "invalid_scheduler_run_request", parsed.issues.join("; "));
+  return parsed.request;
+}
+
+async function artifactExists(projectRoot: string, relativePath: string): Promise<Record<string, unknown>> {
+  return {
+    path: relativePath,
+    exists: await projectFileExists(projectRoot, relativePath),
+  };
+}
+
+async function projectFileExists(projectRoot: string, relativePath: string): Promise<boolean> {
+  try {
+    const fileStat = await stat(path.join(projectRoot, relativePath));
+    return fileStat.isFile();
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return false;
+    throw error;
+  }
 }
 
 async function imageArtifactsResponse(paths: SmallProjectPaths): Promise<ImageArtifactsResponse> {

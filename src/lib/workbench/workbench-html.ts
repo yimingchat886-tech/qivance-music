@@ -1,5 +1,15 @@
 import type { V3ProjectListItem } from "./api-types.ts";
+import type { SchedulerStatusSummary } from "../scheduler/scheduler-status.ts";
 import type { WorkbenchAgentRunSummary, WorkbenchArtifact, WorkbenchFileRef, WorkbenchProjectStatus, WorkbenchStep } from "./project-status.ts";
+
+export type WorkbenchChainSummary = {
+  chain_id: string;
+  status: string;
+  mode?: string;
+  blocking_reasons?: unknown[];
+  artifacts?: Record<string, WorkbenchFileRef>;
+  metrics?: Record<string, string | number | boolean>;
+};
 
 export function renderWorkbenchProjectsPage(input: { projects: V3ProjectListItem[] }): string {
   const rows = input.projects.length === 0
@@ -28,7 +38,11 @@ export function renderWorkbenchProjectsPage(input: { projects: V3ProjectListItem
   `);
 }
 
-export function renderWorkbenchProjectDetailPage(input: { status: WorkbenchProjectStatus }): string {
+export function renderWorkbenchProjectDetailPage(input: {
+  status: WorkbenchProjectStatus;
+  schedulerStatus?: SchedulerStatusSummary;
+  chains?: WorkbenchChainSummary[];
+}): string {
   const status = input.status;
   return layout(`${status.small_project_id} - Qivance Workbench`, `
     <header class="page-header">
@@ -56,6 +70,8 @@ export function renderWorkbenchProjectDetailPage(input: { status: WorkbenchProje
       ${section("Image Review", artifactBlock(status, "image_review_decisions") + artifactBlock(status, "image_assets"))}
       ${section("Source MP4", sourceVideoBlock(status))}
       ${section("Preview", previewBlock(status))}
+      ${input.schedulerStatus ? section("Scheduler", schedulerBlock(input.schedulerStatus)) : ""}
+      ${input.chains && input.chains.length > 0 ? section("Chains", chainList(input.chains)) : ""}
       ${section("Revision", revisionForm(status))}
       ${section("Agent Runs", agentRunList(status.agent_runs))}
       ${section("Export", exportBlock(status))}
@@ -122,6 +138,66 @@ function previewBlock(status: WorkbenchProjectStatus): string {
   return previewReady
     ? `<iframe title="Preview" src="/api/projects/${encodeURIComponent(status.small_project_id)}/html-video/preview"></iframe>`
     : `<p>Preview is not ready.</p>`;
+}
+
+function schedulerBlock(status: SchedulerStatusSummary): string {
+  return `
+    <dl>
+      <dt>Status</dt><dd>${badge(status.overall_status)}</dd>
+      <dt>Ready tasks</dt><dd>${status.ready_task_count}</dd>
+      <dt>Running tasks</dt><dd>${status.running_task_count}</dd>
+      <dt>Blocked tasks</dt><dd>${status.blocked_task_count}</dd>
+      <dt>Active projects</dt><dd>${inlineCodeList(status.active_projects)}</dd>
+      <dt>Active chains</dt><dd>${inlineCodeList(status.active_chains)}</dd>
+    </dl>
+    ${status.resource_locks.length === 0
+      ? `<p>No resource locks.</p>`
+      : `<table><thead><tr><th>Resource</th><th>Project</th><th>Chain</th><th>Task</th></tr></thead><tbody>${status.resource_locks.map((lock) => `
+        <tr>
+          <td>${badge(lock.resource)}</td>
+          <td><code>${escapeHtml(lock.project_id)}</code></td>
+          <td><code>${escapeHtml(lock.chain_id)}</code></td>
+          <td><code>${escapeHtml(lock.owner_task_id)}</code></td>
+        </tr>
+      `).join("")}</tbody></table>`}
+  `;
+}
+
+function chainList(chains: WorkbenchChainSummary[]): string {
+  return `<table><thead><tr><th>Chain</th><th>Status</th><th>Mode</th><th>Blocking</th><th>Metrics</th><th>Artifacts</th></tr></thead><tbody>${chains.map((chain) => `
+    <tr>
+      <td><code>${escapeHtml(chain.chain_id)}</code></td>
+      <td>${badge(chain.status)}</td>
+      <td>${badge(chain.mode ?? "unknown")}</td>
+      <td>${blockingCount(chain.blocking_reasons)}</td>
+      <td>${chainMetrics(chain.metrics)}</td>
+      <td>${chainArtifacts(chain.artifacts)}</td>
+    </tr>
+  `).join("")}</tbody></table>`;
+}
+
+function inlineCodeList(items: string[]): string {
+  if (items.length === 0) return `<span class="missing">none</span>`;
+  return items.map((item) => `<code>${escapeHtml(item)}</code>`).join(" ");
+}
+
+function blockingCount(reasons: unknown[] | undefined): string {
+  if (!reasons || reasons.length === 0) return `<span class="exists">0</span>`;
+  return `<span class="missing">${reasons.length}</span>`;
+}
+
+function chainMetrics(metrics: Record<string, string | number | boolean> | undefined): string {
+  if (!metrics || Object.keys(metrics).length === 0) return `<span class="missing">missing</span>`;
+  return Object.entries(metrics).map(([id, value]) => `
+    <div><code>${escapeHtml(id)}</code> ${escapeHtml(String(value))}</div>
+  `).join("");
+}
+
+function chainArtifacts(artifacts: Record<string, WorkbenchFileRef> | undefined): string {
+  if (!artifacts) return `<span class="missing">missing</span>`;
+  return Object.entries(artifacts).map(([id, ref]) => `
+    <div><code>${escapeHtml(id)}</code> ${ref.exists ? `<span class="exists">exists</span>` : `<span class="missing">missing</span>`}</div>
+  `).join("");
 }
 
 function revisionForm(status: WorkbenchProjectStatus): string {
