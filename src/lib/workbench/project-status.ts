@@ -3,8 +3,21 @@ import { readdir, readFile, stat } from "node:fs/promises";
 import path from "node:path";
 import { resolveSmallProjectPaths } from "../project-core/paths.ts";
 
-export type WorkbenchProjectMode = "image_music_mode" | "source_video_mode" | "blocked" | "conflict";
-export type WorkbenchStepStatus = "not_started" | "ready" | "running" | "passed" | "blocked" | "failed" | "diagnostic_only";
+export type WorkbenchProjectMode = "image_music_mode" | "source_video_mode" | "v5_control_plane" | "blocked" | "conflict";
+export type WorkbenchStepStatus =
+  | "not_started"
+  | "input_required"
+  | "input_uploaded"
+  | "input_confirmed"
+  | "queued"
+  | "ready"
+  | "running"
+  | "stopping"
+  | "stopped"
+  | "passed"
+  | "blocked"
+  | "failed"
+  | "diagnostic_only";
 
 export type WorkbenchBlockingReason = {
   code: string;

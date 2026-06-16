@@ -7,6 +7,8 @@
     "test": "node --experimental-strip-types --test tests/html-video-*.test.ts",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "dev": "node --experimental-strip-types src/server.ts",
+    "prisma:generate": "prisma generate",
+    "prisma:migrate": "prisma migrate deploy",
     "workflow": "node --experimental-strip-types src/cli/run-workflow.ts",
     "demo:html-video": "node --experimental-strip-types scripts/demo-html-video-from-fixture.ts fixtures/html-video-demo"
   },
@@ -14,10 +16,14 @@
     "@html-video/adapter-hyperframes": "workspace:*",
     "@html-video/content-graph": "workspace:*",
     "@html-video/core": "workspace:*",
-    "@html-video/runtime": "workspace:*"
+    "@html-video/runtime": "workspace:*",
+    "@prisma/adapter-better-sqlite3": "^7.8.0",
+    "@prisma/client": "^7.8.0"
   },
   "devDependencies": {
+    "@types/better-sqlite3": "^7.6.13",
     "@types/node": "^24.0.0",
+    "prisma": "^7.8.0",
     "typescript": "^5.9.0"
   },
   "engines": {

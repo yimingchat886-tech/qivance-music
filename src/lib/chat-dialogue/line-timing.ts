@@ -1,7 +1,8 @@
 import type { LyricsLineMap } from "./lyrics-line-map.ts";
 
 export type WordTiming = {
-  word: string;
+  word?: string;
+  text?: string;
   start_sec: number;
   end_sec: number;
   line_id?: string;
@@ -95,7 +96,7 @@ function timingsFromWordSequence(
     }
     const matched: WordTiming[] = [];
     for (const expected of expectedWords) {
-      const nextIndex = words.findIndex((word, index) => index >= cursor && normalizeWord(word.word) === expected);
+      const nextIndex = words.findIndex((word, index) => index >= cursor && normalizeWord(wordText(word)) === expected);
       if (nextIndex === -1) continue;
       matched.push(words[nextIndex]!);
       cursor = nextIndex + 1;
@@ -156,6 +157,10 @@ function sectionForTime(sectionMap: SectionMapLike, startSec: number): SectionMa
 
 function normalizeWords(text: string): string[] {
   return text.split(/\s+/).map(normalizeWord).filter(Boolean);
+}
+
+function wordText(word: WordTiming): string {
+  return word.word ?? word.text ?? "";
 }
 
 function normalizeWord(word: string): string {

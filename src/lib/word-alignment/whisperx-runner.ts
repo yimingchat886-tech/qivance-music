@@ -124,6 +124,9 @@ export async function runWhisperXAlignmentWithDeps(
       env: {
         ...process.env,
         HF_HOME: input.cacheDir,
+        NUMBA_CACHE_DIR: process.env.NUMBA_CACHE_DIR ?? defaultTmpCacheDir("qivance-numba-cache"),
+        TORCH_HOME: process.env.TORCH_HOME ?? defaultTmpCacheDir("qivance-torch-cache"),
+        XDG_CACHE_HOME: process.env.XDG_CACHE_HOME ?? defaultTmpCacheDir("qivance-xdg-cache"),
         QIVANCE_WHISPERX_MODEL: input.model,
         QIVANCE_WHISPERX_DEVICE: input.device,
       },
@@ -176,3 +179,6 @@ async function readJson<T>(filePath: string, missingMessage: string): Promise<T>
   }
 }
 
+function defaultTmpCacheDir(name: string): string {
+  return `${process.env.TMPDIR ?? "/tmp"}/${name}`;
+}

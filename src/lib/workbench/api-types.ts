@@ -9,6 +9,10 @@ export type ApiErrorResponse = {
 
 export type V3ProjectListItem = {
   small_project_id: string;
+  project_id?: string;
+  title?: string;
+  content_type?: string;
+  source?: "file_system" | "v5_control_plane";
   mode: WorkbenchProjectMode;
   status: WorkbenchStepStatus;
   project_root: string;

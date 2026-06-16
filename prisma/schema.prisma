@@ -1,0 +1,140 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+}
+
+model Project {
+  id          String   @id
+  title       String
+  description String?
+  contentType String   @map("content_type")
+  status      String
+  projectRoot String   @map("project_root")
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  inputs    ProjectInput[]
+  artifacts Artifact[]
+  chains    Chain[]
+  runs      SchedulerRun[]
+  tasks     SchedulerTask[]
+
+  @@map("projects")
+}
+
+model ProjectInput {
+  id           String   @id
+  projectId    String   @map("project_id")
+  kind         String
+  status       String
+  originalName String   @map("original_name")
+  path         String
+  stablePath   String   @map("stable_path")
+  sha256       String
+  mime         String
+  createdAt    DateTime @default(now()) @map("created_at")
+
+  project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@index([projectId, kind, status])
+  @@map("project_inputs")
+}
+
+model Artifact {
+  id             String   @id
+  projectId      String   @map("project_id")
+  chainId        String?  @map("chain_id")
+  kind           String
+  path           String
+  sha256         String
+  schemaVersion  String?  @map("schema_version")
+  status         String
+  createdByRunId String?  @map("created_by_run_id")
+  createdAt      DateTime @default(now()) @map("created_at")
+
+  project Project       @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  run     SchedulerRun? @relation(fields: [createdByRunId], references: [id], onDelete: SetNull)
+
+  @@index([projectId, chainId, status])
+  @@index([createdByRunId])
+  @@map("artifacts")
+}
+
+model Chain {
+  id          String   @id
+  projectId   String   @map("project_id")
+  chainId     String   @map("chain_id")
+  status      String
+  metricsJson String?  @map("metrics_json")
+  lastError   String?  @map("last_error")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@unique([projectId, chainId])
+  @@map("chains")
+}
+
+model SchedulerRun {
+  id            String   @id
+  projectId     String   @map("project_id")
+  status        String
+  mode          String
+  priority      Int
+  stopRequested Boolean  @default(false) @map("stop_requested")
+  createdAt     DateTime @default(now()) @map("created_at")
+  updatedAt     DateTime @updatedAt @map("updated_at")
+
+  project   Project          @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  tasks     SchedulerTask[]
+  events    SchedulerEvent[]
+  artifacts Artifact[]
+
+  @@index([projectId, status])
+  @@index([status])
+  @@map("scheduler_runs")
+}
+
+model SchedulerTask {
+  id                       String    @id
+  runId                    String    @map("run_id")
+  projectId                String    @map("project_id")
+  chainId                  String    @map("chain_id")
+  stage                    String
+  status                   String
+  dependenciesJson         String    @map("dependencies_json")
+  resourceRequirementsJson String    @map("resource_requirements_json")
+  inputArtifactsJson       String    @map("input_artifacts_json")
+  outputArtifactsJson      String    @map("output_artifacts_json")
+  lastError                String?   @map("last_error")
+  startedAt                DateTime? @map("started_at")
+  finishedAt               DateTime? @map("finished_at")
+
+  run     SchedulerRun @relation(fields: [runId], references: [id], onDelete: Cascade)
+  project Project      @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  events  SchedulerEvent[]
+
+  @@index([runId, status])
+  @@index([projectId, chainId, status])
+  @@map("scheduler_tasks")
+}
+
+model SchedulerEvent {
+  id          String   @id
+  runId       String?  @map("run_id")
+  taskId      String?  @map("task_id")
+  eventType   String   @map("event_type")
+  message     String
+  detailsJson String?  @map("details_json")
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  run  SchedulerRun?  @relation(fields: [runId], references: [id], onDelete: Cascade)
+  task SchedulerTask? @relation(fields: [taskId], references: [id], onDelete: Cascade)
+
+  @@index([runId, createdAt])
+  @@index([taskId, createdAt])
+  @@map("scheduler_events")
+}
