@@ -13,7 +13,8 @@
   "dependencies": {
     "@html-video/adapter-hyperframes": "workspace:*",
     "@html-video/content-graph": "workspace:*",
-    "@html-video/core": "workspace:*"
+    "@html-video/core": "workspace:*",
+    "@html-video/runtime": "workspace:*"
   },
   "devDependencies": {
     "@types/node": "^24.0.0",

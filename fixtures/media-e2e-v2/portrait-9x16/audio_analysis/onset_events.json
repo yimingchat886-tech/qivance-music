@@ -1,0 +1,302 @@
+{
+  "schema_version": 1,
+  "duration_sec": 24.0,
+  "events": [
+    {
+      "time_sec": 0.1,
+      "strength": 1.0
+    },
+    {
+      "time_sec": 0.3,
+      "strength": 1.0
+    },
+    {
+      "time_sec": 1.1,
+      "strength": 1.0
+    },
+    {
+      "time_sec": 1.4,
+      "strength": 1.0
+    },
+    {
+      "time_sec": 1.7,
+      "strength": 1.0
+    },
+    {
+      "time_sec": 2.0,
+      "strength": 1.0
+    },
+    {
+      "time_sec": 2.3,
+      "strength": 1.0
+    },
+    {
+      "time_sec": 2.6,
+      "strength": 1.0
+    },
+    {
+      "time_sec": 2.9,
+      "strength": 1.0
+    },
+    {
+      "time_sec": 3.6,
+      "strength": 1.0
+    },
+    {
+      "time_sec": 3.9,
+      "strength": 1.0
+    },
+    {
+      "time_sec": 4.2,
+      "strength": 1.0
+    },
+    {
+      "time_sec": 4.5,
+      "strength": 1.0
+    },
+    {
+      "time_sec": 4.8,
+      "strength": 1.0
+    },
+    {
+      "time_sec": 5.0,
+      "strength": 1.0
+    },
+    {
+      "time_sec": 5.3,
+      "strength": 1.0
+    },
+    {
+      "time_sec": 5.4,
+      "strength": 1.0
+    },
+    {
+      "time_sec": 5.7,
+      "strength": 1.0
+    },
+    {
+      "time_sec": 6.0,
+      "strength": 1.0
+    },
+    {
+      "time_sec": 6.4,
+      "strength": 1.0
+    },
+    {
+      "time_sec": 6.7,
+      "strength": 1.0
+    },
+    {
+      "time_sec": 7.3,
+      "strength": 1.0
+    },
+    {
+      "time_sec": 7.5,
+      "strength": 1.0
+    },
+    {
+      "time_sec": 7.9,
+      "strength": 1.0
+    },
+    {
+      "time_sec": 8.1,
+      "strength": 1.0
+    },
+    {
+      "time_sec": 8.6,
+      "strength": 1.0
+    },
+    {
+      "time_sec": 9.0,
+      "strength": 1.0
+    },
+    {
+      "time_sec": 9.2,
+      "strength": 1.0
+    },
+    {
+      "time_sec": 9.5,
+      "strength": 1.0
+    },
+    {
+      "time_sec": 9.8,
+      "strength": 1.0
+    },
+    {
+      "time_sec": 10.1,
+      "strength": 1.0
+    },
+    {
+      "time_sec": 10.4,
+      "strength": 1.0
+    },
+    {
+      "time_sec": 11.0,
+      "strength": 1.0
+    },
+    {
+      "time_sec": 11.7,
+      "strength": 1.0
+    },
+    {
+      "time_sec": 12.3,
+      "strength": 1.0
+    },
+    {
+      "time_sec": 12.5,
+      "strength": 1.0
+    },
+    {
+      "time_sec": 12.9,
+      "strength": 1.0
+    },
+    {
+      "time_sec": 13.2,
+      "strength": 1.0
+    },
+    {
+      "time_sec": 13.4,
+      "strength": 1.0
+    },
+    {
+      "time_sec": 13.7,
+      "strength": 1.0
+    },
+    {
+      "time_sec": 13.9,
+      "strength": 1.0
+    },
+    {
+      "time_sec": 14.2,
+      "strength": 1.0
+    },
+    {
+      "time_sec": 14.5,
+      "strength": 1.0
+    },
+    {
+      "time_sec": 14.7,
+      "strength": 1.0
+    },
+    {
+      "time_sec": 14.8,
+      "strength": 1.0
+    },
+    {
+      "time_sec": 15.0,
+      "strength": 1.0
+    },
+    {
+      "time_sec": 15.4,
+      "strength": 1.0
+    },
+    {
+      "time_sec": 16.0,
+      "strength": 1.0
+    },
+    {
+      "time_sec": 16.4,
+      "strength": 1.0
+    },
+    {
+      "time_sec": 16.7,
+      "strength": 1.0
+    },
+    {
+      "time_sec": 17.0,
+      "strength": 1.0
+    },
+    {
+      "time_sec": 17.2,
+      "strength": 1.0
+    },
+    {
+      "time_sec": 17.3,
+      "strength": 1.0
+    },
+    {
+      "time_sec": 17.7,
+      "strength": 1.0
+    },
+    {
+      "time_sec": 17.9,
+      "strength": 1.0
+    },
+    {
+      "time_sec": 18.2,
+      "strength": 1.0
+    },
+    {
+      "time_sec": 18.6,
+      "strength": 1.0
+    },
+    {
+      "time_sec": 18.9,
+      "strength": 1.0
+    },
+    {
+      "time_sec": 19.2,
+      "strength": 1.0
+    },
+    {
+      "time_sec": 19.8,
+      "strength": 1.0
+    },
+    {
+      "time_sec": 20.1,
+      "strength": 1.0
+    },
+    {
+      "time_sec": 20.4,
+      "strength": 1.0
+    },
+    {
+      "time_sec": 20.8,
+      "strength": 1.0
+    },
+    {
+      "time_sec": 21.1,
+      "strength": 1.0
+    },
+    {
+      "time_sec": 21.4,
+      "strength": 1.0
+    },
+    {
+      "time_sec": 21.7,
+      "strength": 1.0
+    },
+    {
+      "time_sec": 22.0,
+      "strength": 1.0
+    },
+    {
+      "time_sec": 22.3,
+      "strength": 1.0
+    },
+    {
+      "time_sec": 22.6,
+      "strength": 1.0
+    },
+    {
+      "time_sec": 22.9,
+      "strength": 1.0
+    },
+    {
+      "time_sec": 23.2,
+      "strength": 1.0
+    },
+    {
+      "time_sec": 23.5,
+      "strength": 1.0
+    },
+    {
+      "time_sec": 23.8,
+      "strength": 1.0
+    },
+    {
+      "time_sec": 24.0,
+      "strength": 1.0
+    }
+  ]
+}

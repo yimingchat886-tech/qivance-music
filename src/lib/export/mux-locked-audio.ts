@@ -11,12 +11,24 @@ export async function muxLockedAudio(input: {
   finalMp4Path: string;
 }): Promise<void> {
   await mkdir(path.dirname(input.finalMp4Path), { recursive: true });
-  await execFileAsync("ffmpeg", [
+  await execFileAsync("ffmpeg", buildMuxLockedAudioCommand({
+    visualPath: input.visualMp4Path,
+    audioPath: input.masterAudioPath,
+    outputPath: input.finalMp4Path,
+  }));
+}
+
+export function buildMuxLockedAudioCommand(input: {
+  visualPath: string;
+  audioPath: string;
+  outputPath: string;
+}): string[] {
+  return [
     "-y",
     "-i",
-    input.visualMp4Path,
+    input.visualPath,
     "-i",
-    input.masterAudioPath,
+    input.audioPath,
     "-map",
     "0:v:0",
     "-map",
@@ -27,7 +39,8 @@ export async function muxLockedAudio(input: {
     "aac",
     "-b:a",
     "192k",
-    "-shortest",
-    input.finalMp4Path,
-  ]);
+    "-movflags",
+    "+faststart",
+    input.outputPath,
+  ];
 }

@@ -60,8 +60,10 @@ test("html-video workflow builds workspace, frames, preview, and render manifest
       durationSec: 4,
       hasVideoStream: true,
       hasAudioStream: true,
-      video: { width: 1080, height: 1920, fps: 30 },
-      audio: { durationSec: 4 },
+      videoStreamCount: 1,
+      audioStreamCount: 1,
+      video: { codecName: "h264", width: 1080, height: 1920, fps: 30 },
+      audio: { codecName: "aac", durationSec: 4 },
     }),
   });
 

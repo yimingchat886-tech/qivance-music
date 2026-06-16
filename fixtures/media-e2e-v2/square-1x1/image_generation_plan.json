@@ -1,0 +1,19 @@
+{
+  "schema_version": 1,
+  "small_project_id": "media_e2e_v2_square_1x1",
+  "requests": [
+    {
+      "request_id": "img_req_scene_001_bg",
+      "scene_id": "scene_001_hook",
+      "asset_role": "background",
+      "prompt": "Cinematic abstract music video background, no text, energetic light trails, production ready",
+      "reference_asset_ids": [],
+      "aspect_ratio": "1:1",
+      "target_size": {
+        "width": 1080,
+        "height": 1080
+      },
+      "variants": 2
+    }
+  ]
+}

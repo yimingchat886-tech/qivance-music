@@ -1,0 +1,46 @@
+{
+  "schema_version": 1,
+  "small_project_id": "media_e2e_v2_portrait_9x16",
+  "aspect_ratio": "9:16",
+  "resolution": {
+    "width": 1080,
+    "height": 1920
+  },
+  "fps": 30,
+  "duration_sec": 24,
+  "scenes": [
+    {
+      "scene_id": "scene_001_hook",
+      "section_ids": [
+        "sec_001_hook"
+      ],
+      "start_sec": 0,
+      "end_sec": 8,
+      "image_generation": {
+        "enabled": true
+      }
+    },
+    {
+      "scene_id": "scene_002_build",
+      "section_ids": [
+        "sec_002_build"
+      ],
+      "start_sec": 8,
+      "end_sec": 18,
+      "image_generation": {
+        "enabled": false
+      }
+    },
+    {
+      "scene_id": "scene_003_outro",
+      "section_ids": [
+        "sec_003_outro"
+      ],
+      "start_sec": 18,
+      "end_sec": 24,
+      "image_generation": {
+        "enabled": false
+      }
+    }
+  ]
+}
