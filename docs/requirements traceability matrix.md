@@ -1,7 +1,7 @@
 # Requirements Traceability Matrix
 
 Date: 2026-06-15
-Branch: `codex/v4-plan`
+Branch: `codex/planv5-track-trellis-files`
 
 Sources:
 - V2 PRD: `docs/qivance_music_html_video_integration_prd.v2.md`
@@ -15,6 +15,8 @@ Sources:
 - V4 SPEC / PLAN: `docs/SPEC.v4.md`, `docs/PLAN.v4.md`
 - V4 report: `docs/TEST_REPORT.v4.md`
 - V5 PRD: `docs/qivance_music_html_video_integration_prd.v5.md`
+- V5 SPEC / PLAN: `docs/SPEC.v5.md`, `docs/PLAN.v5.md`
+- V5 report: `docs/TEST_REPORT.v5.md`
 
 Latest evidence commits:
 - `e67e223` - source-video Workbench contracts
@@ -71,23 +73,23 @@ Branch: `codex/v4-plan`
 ## V5 Addendum
 
 Date: 2026-06-15
-Branch: `codex/v4-plan`
+Branch: `codex/planv5-track-trellis-files`
 
 | 需求域 | V5 关联需求 | V5 目标范围 | 当前实现状态 | 主要证据 |
 |---|---|---|---|---|
-| 产品入口 / 项目创建 | V5 two-step project creation, upload lyrics/audio, confirm inputs | 两步创建：`POST /api/projects` 创建空项目，`POST /api/projects/:id/inputs` 上传歌词和音频，`confirm inputs` 后才启动 scheduler。 | 规划中：V3/V4 只能打开已有 project/fixture；V5 需要新增 DB-backed 创建和上传入口。 | `docs/qivance_music_html_video_integration_prd.v5.md` |
-| SQLite + Prisma 控制面 | Project/Input/Artifact/Chain/Run/Task/Event models | SQLite + Prisma 作为内部控制面；媒体文件和 JSON artifacts 仍保存在项目目录，DB 记录 path、sha、status、run/task/event。 | 规划中：当前 V2-V4 以 file-system 为权威状态，未引入 DB/Prisma。 | `docs/qivance_music_html_video_integration_prd.v5.md` |
-| 输入确认与替换 | input_uploaded, input_confirmed, replace=true | 上传时校验格式/sha；用户确认后锁定输入并自动排队；运行中禁止替换；停止后可显式 `replace=true`，旧 artifacts 标记 stale。 | 规划中：V3/V4 有输入诊断和 artifact 合同，但没有上传确认/替换状态机。 | `docs/qivance_music_html_video_integration_prd.v5.md` |
-| Server 内置 runner loop | persistent local scheduler execution | Node server 启动内置 runner loop，扫描 queued/ready task，按资源锁执行，支持 graceful stop 和重启恢复。 | 规划中：V4 已有 scheduler plan/run_queue/resource locks/local tick，但没有 server 内置持续执行 loop。 | `src/lib/scheduler/*`; `docs/qivance_music_html_video_integration_prd.v5.md` |
-| 自动 timing pipeline | upload lyrics/audio -> timing bundle | 用户确认输入后自动跑 timing pipeline，产出 beat/onset/energy/word timing/alignment/section map，再进入 chat chain。 | 规划中：V2/V4 能消费或生成 timing 证据，但还没有从上传入口自动触发的产品化链路。 | `docs/qivance_music_html_video_integration_prd.v5.md`; `src/lib/chat-dialogue/*` |
-| Chain registry | extensible chain registry, P0 chat only | 做可扩展 registry；V5 P0 只启用 `chat_dialogue_mv`；`image_storyboard_mv` 从后续产品路线删除；`video_chain` 下一版本再做。 | 规划中：V4 scheduler 可表示多链路，但 registry 产品边界和链路方向需要 V5 落地。 | `docs/qivance_music_html_video_integration_prd.v5.md`; `docs/PLAN.v4.md` |
-| 最小内部 Workbench | create/upload/confirm/run/stop/download | Node-served 内部页面支持创建项目、上传输入、确认、查看 run/task/event、graceful stop、下载 final MP4。 | 规划中：V3/V4 Workbench 展示已有项目和链路状态，但没有上传入口与 DB-backed run 控制台。 | `src/lib/workbench/workbench-html.ts`; `docs/qivance_music_html_video_integration_prd.v5.md` |
-| 延后 / 取消范围 | internal-only product boundary | SaaS 取消；登录、用户体系、复杂权限、Cloudflare Access/Tailscale、模板资源产品化、DeepSeek/MiniMax、video_chain 均不进 V5 P0。 | 规划中并作为范围约束：防止 v5 被扩张为完整 SaaS 或模板产品化版本。 | `docs/qivance_music_html_video_integration_prd.md`; `docs/qivance_music_html_video_integration_prd.v5.md` |
+| 产品入口 / 项目创建 | V5 two-step project creation, upload lyrics/audio, confirm inputs | 两步创建：`POST /api/projects` 创建空项目，`POST /api/projects/:id/inputs` 上传歌词和音频，`confirm inputs` 后才启动 scheduler。 | 已实现并验收：DB-backed project create/list/detail、上传、确认均通过 API 测试和 V5 E2E；创建项目不会创建 SchedulerRun。 | `src/server.ts`; `src/lib/project-core/project-create-v5.ts`; `src/lib/project-core/project-inputs-v5.ts`; `tests/workbench-v5-api.test.ts`; `scripts/e2e-v5-product-entry.ts`; `docs/TEST_REPORT.v5.md` |
+| SQLite + Prisma 控制面 | Project/Input/Artifact/Chain/Run/Task/Event models | SQLite + Prisma 作为内部控制面；媒体文件和 JSON artifacts 仍保存在项目目录，DB 记录 path、sha、status、run/task/event。 | 已实现并验收：新增 Prisma schema/migration/client helper，控制面 DB 位于 `<storageRoot>/qivance_control.sqlite`，测试覆盖 rows 与 artifact metadata。 | `prisma/schema.prisma`; `prisma/migrations/20260615000000_v5_control_plane/migration.sql`; `src/lib/db/*`; `tests/prisma-control-plane.test.ts`; `docs/TEST_REPORT.v5.md` |
+| 输入确认与替换 | input_uploaded, input_confirmed, replace=true | 上传时校验格式/sha；用户确认后锁定输入并自动排队；运行中禁止替换；停止后可显式 `replace=true`，旧 artifacts 标记 stale。 | 已实现并验收：partial upload、active input sha、stable path materialization、active run replacement rejection、stop 后 replace/new run 在 focused tests 和 E2E 中通过。 | `src/lib/project-core/project-inputs-v5.ts`; `tests/project-inputs-v5.test.ts`; `tests/workbench-v5-api.test.ts`; `scripts/e2e-v5-product-entry.ts` |
+| Server 内置 runner loop | persistent local scheduler execution | Node server 启动内置 runner loop，扫描 queued/ready task，按资源锁执行，支持 graceful stop 和重启恢复。 | 已实现并验收：Node server 启动内置 DB runner loop，按依赖 claim/执行 task，写 run/task/event/artifact 状态，支持 recovery 和 graceful stop；P0 本地实现为单进程串行 runner，未新增跨进程 DB resource-lock 表。 | `src/lib/scheduler/db-run-store.ts`; `src/lib/scheduler/server-runner-loop.ts`; `src/server.ts`; `tests/server-runner-loop-v5.test.ts`; `docs/TEST_REPORT.v5.md` |
+| 自动 timing pipeline | upload lyrics/audio -> timing bundle | 用户确认输入后自动跑 timing pipeline，产出 beat/onset/energy/word timing/alignment/section map，再进入 chat chain。 | 已实现并验收：V5 timing task 运行 librosa audio analysis、WhisperX forced alignment、section map builder；本机 E2E 使用真实 CPU WhisperX 跑通，缺依赖时归类 `timing_blocked`。 | `src/lib/scheduler/v5-task-handlers.ts`; `src/lib/word-alignment/whisperx-runner.ts`; `tests/timing-pipeline-v5.test.ts`; `scripts/e2e-v5-product-entry.ts`; `docs/TEST_REPORT.v5.md` |
+| Chain registry | extensible chain registry, P0 chat only | 做可扩展 registry；V5 P0 只启用 `chat_dialogue_mv`；`image_storyboard_mv` 从后续产品路线删除；`video_chain` 下一版本再做。 | 已实现并验收：registry 只启用 `chat_dialogue_mv`，reject unknown、`image_storyboard_mv`、`video_chain`；confirm inputs 按 registry 生成 9 个 SchedulerTask。 | `src/lib/chain-registry/chain-registry.ts`; `tests/chain-registry-v5.test.ts`; `tests/project-inputs-v5.test.ts` |
+| 最小内部 Workbench | create/upload/confirm/run/stop/download | Node-served 内部页面支持创建项目、上传输入、确认、查看 run/task/event、graceful stop、下载 final MP4。 | 已实现并验收：项目列表新增 V5 create form，V5 详情页显示 input sha/mime/status、上传/确认、run/task/event、stop、final/manifest/QA 链接；未引入新前端栈。 | `src/lib/workbench/workbench-html.ts`; `src/server.ts`; `tests/workbench-html.test.ts`; `tests/workbench-v5-api.test.ts` |
+| 延后 / 取消范围 | internal-only product boundary | SaaS 取消；登录、用户体系、复杂权限、Cloudflare Access/Tailscale、模板资源产品化、DeepSeek/MiniMax、video_chain 均不进 V5 P0。 | 已约束：V5 实现未新增 SaaS/auth/users/permissions/Cloudflare/Tailscale/template marketplace/DeepSeek/MiniMax；`video_chain` 仅保留为后续方向，`image_storyboard_mv` 不再作为 V5 product route。 | `docs/qivance_music_html_video_integration_prd.md`; `docs/qivance_music_html_video_integration_prd.v5.md`; `src/lib/chain-registry/chain-registry.ts`; `docs/TEST_REPORT.v5.md` |
 
 ## Acceptance Summary
 
 - V2 验收结论：media/export 合同已通过三比例验收；V2 不再作为 AI-authored frame 稳定性的最终证据，因为 fallback/timeout 是诊断路径。
 - V3 验收结论：V3 P0 生产工作台/API 闭环已通过；primary product flow、source-video product flow、three-ratio production-strict regression 均有本地 artifact 证据。
 - V4 验收结论：V4 调度器计划/队列/execution tick/API/Workbench 可视化和 chat-dialogue 文件合同已通过 focused tests、typecheck、scheduler E2E 和 chat-dialogue E2E；持久化 daemon、分布式 worker、数据库化、登录/权限/Cloudflare/Tailscale 和上游内容生成仍是后续范围；SaaS 在 V5 决策中取消。
-- V5 规划结论：下一步聚焦内部上传入口、SQLite + Prisma 控制面、server 内置 runner loop、自动 timing 和 chat_dialogue_mv；SaaS 取消，模板资源产品化延后，`image_storyboard_mv` 从后续产品路线删除，`video_chain` 下一版本再做。
-- 未实现结论：剩余未实现项集中在 V5 产品入口/数据库/runner loop、后续 video_chain、最终视觉设计、高级编辑器、RAG recycle 和资源打包；SaaS 不再作为产品方向。
+- V5 验收结论：内部上传入口、SQLite + Prisma 控制面、server 内置 runner loop、自动 timing、`chat_dialogue_mv` runner、Workbench V5 控制台、graceful stop、post-stop replace 和 product-entry E2E 已通过；P0 本地 runner 未新增跨进程 DB resource-lock 表。
+- 未实现结论：剩余未实现项集中在后续 video_chain、最终视觉设计、高级编辑器、RAG recycle、资源打包和多进程资源锁；SaaS 不再作为产品方向。

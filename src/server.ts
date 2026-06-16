@@ -16,6 +16,11 @@ import {
   type RenderManifestV3ProjectMode,
 } from "./lib/export/render-manifest-v3.ts";
 import { sha256File } from "./lib/fs-utils.ts";
+import { listControlPlaneProjects, readControlPlaneProject } from "./lib/db/control-plane.ts";
+import { closeQivancePrismaClient, createQivancePrismaClient } from "./lib/db/prisma-client.ts";
+import { createV5Project } from "./lib/project-core/project-create-v5.ts";
+import { confirmV5ProjectInputs, uploadV5ProjectInputs } from "./lib/project-core/project-inputs-v5.ts";
+import { parseMultipartForm } from "./lib/multipart-form.ts";
 import { resolveSmallProjectPaths, type SmallProjectPaths } from "./lib/project-core/paths.ts";
 import { formatStartupMessage } from "./lib/server-urls.ts";
 import { buildAgentContext } from "./lib/video-contract/agent-context.schema.ts";
@@ -69,11 +74,20 @@ import type {
   V3ProjectListResponse,
 } from "./lib/workbench/api-types.ts";
 import { readWorkbenchProjectStatus, type WorkbenchProjectStatus } from "./lib/workbench/project-status.ts";
-import { renderWorkbenchProjectDetailPage, renderWorkbenchProjectsPage, type WorkbenchChainSummary } from "./lib/workbench/workbench-html.ts";
+import {
+  renderWorkbenchProjectDetailPage,
+  renderWorkbenchProjectsPage,
+  renderWorkbenchV5ProjectDetailPage,
+  type V5WorkbenchProjectDetail,
+  type WorkbenchChainSummary,
+} from "./lib/workbench/workbench-html.ts";
 import { createSchedulerRun, readRunQueue } from "./lib/scheduler/run-queue.ts";
 import { cancelSchedulerRun } from "./lib/scheduler/scheduler-runner.ts";
 import { readSchedulerStatus } from "./lib/scheduler/scheduler-status.ts";
 import { parseSchedulerRunRequest, type SchedulerRunRequest } from "./lib/scheduler/scheduler-types.ts";
+import { requestV5RunStop } from "./lib/scheduler/db-run-store.ts";
+import { startV5RunnerLoop } from "./lib/scheduler/server-runner-loop.ts";
+import { createV5TaskHandlers } from "./lib/scheduler/v5-task-handlers.ts";
 import { buildChatAnimationPlan, validateChatAnimationPlan, writeChatAnimationPlan, type ChatAnimationPlan } from "./lib/chat-dialogue/chat-animation-plan.ts";
 import { buildChatFrameContracts, validateChatFrameContracts, writeChatFrameContracts, type ChatFrameContracts } from "./lib/chat-dialogue/chat-frame-contracts.ts";
 import { renderChatFrameHtml, validateChatFrameHtml, writeChatFrameHtml } from "./lib/chat-dialogue/chat-frame-html.ts";
@@ -90,6 +104,14 @@ const host = process.env.HOST?.trim() || "0.0.0.0";
 const execFileAsync = promisify(execFile);
 
 await mkdir(storageRoot, { recursive: true });
+const prisma = await createQivancePrismaClient(storageRoot);
+const v5Runner = process.env.QIVANCE_V5_RUNNER === "0"
+  ? null
+  : await startV5RunnerLoop({
+    prisma,
+    handlers: createV5TaskHandlers(),
+    intervalMs: Number(process.env.QIVANCE_V5_RUNNER_INTERVAL_MS ?? 1000),
+  });
 
 const server = createServer(async (request, response) => {
   try {
@@ -115,6 +137,22 @@ server.listen(port, host, () => {
   console.log(formatStartupMessage({ host, port: actualPort, interfaces: networkInterfaces() }));
 });
 
+process.once("SIGTERM", () => {
+  void shutdown();
+});
+process.once("SIGINT", () => {
+  void shutdown();
+});
+
+let shuttingDown = false;
+async function shutdown(): Promise<void> {
+  if (shuttingDown) return;
+  shuttingDown = true;
+  v5Runner?.stop();
+  await closeQivancePrismaClient(prisma).catch(() => undefined);
+  server.close(() => process.exit(0));
+}
+
 async function route(request: IncomingMessage, response: ServerResponse): Promise<void> {
   const url = new URL(request.url ?? "/", `http://${request.headers.host ?? "127.0.0.1"}`);
   if (request.method === "GET" && url.pathname === "/") {
@@ -129,6 +167,11 @@ async function route(request: IncomingMessage, response: ServerResponse): Promis
 
   const projectPageMatch = url.pathname.match(/^\/projects\/([^/]+)$/);
   if (request.method === "GET" && projectPageMatch) {
+    const v5Project = await readV5ProjectFromRoute(projectPageMatch[1]);
+    if (v5Project) {
+      sendHtml(response, renderWorkbenchV5ProjectDetailPage({ detail: v5ProjectDetailResponse(v5Project).status }));
+      return;
+    }
     const paths = await resolveExistingProjectPaths(projectPageMatch[1]);
     const [status, schedulerStatus, chains] = await Promise.all([
       readWorkbenchProjectStatus({ storageRoot, smallProjectId: paths.smallProjectId }),
@@ -144,11 +187,40 @@ async function route(request: IncomingMessage, response: ServerResponse): Promis
     return;
   }
 
+  if (request.method === "POST" && url.pathname === "/api/projects") {
+    const body = await readJsonRequestBody(request);
+    sendJson(response, await createV5ProjectResponse(body), 201);
+    return;
+  }
+
   const projectDetailMatch = url.pathname.match(/^\/api\/projects\/([^/]+)$/);
   if (request.method === "GET" && projectDetailMatch) {
+    const v5Project = await readV5ProjectFromRoute(projectDetailMatch[1]);
+    if (v5Project) {
+      sendJson(response, v5ProjectDetailResponse(v5Project));
+      return;
+    }
     const paths = await resolveExistingProjectPaths(projectDetailMatch[1]);
     const status = await readWorkbenchProjectStatus({ storageRoot, smallProjectId: paths.smallProjectId });
     sendJson(response, projectDetailResponse(status));
+    return;
+  }
+
+  const v5InputsMatch = url.pathname.match(/^\/api\/projects\/([^/]+)\/inputs$/);
+  if (request.method === "POST" && v5InputsMatch) {
+    sendJson(response, await uploadV5ProjectInputsResponse(v5InputsMatch[1], request));
+    return;
+  }
+
+  const v5ConfirmInputsMatch = url.pathname.match(/^\/api\/projects\/([^/]+)\/inputs\/confirm$/);
+  if (request.method === "POST" && v5ConfirmInputsMatch) {
+    sendJson(response, await confirmV5ProjectInputsResponse(v5ConfirmInputsMatch[1]), 202);
+    return;
+  }
+
+  const v5RunStopMatch = url.pathname.match(/^\/api\/projects\/([^/]+)\/runs\/([^/]+)\/stop$/);
+  if (request.method === "POST" && v5RunStopMatch) {
+    sendJson(response, await stopV5RunResponse(v5RunStopMatch[1], v5RunStopMatch[2]), 202);
     return;
   }
 
@@ -436,9 +508,15 @@ async function listSmallProjectIds(): Promise<string[]> {
 
 async function listApiProjects(): Promise<V3ProjectListResponse> {
   const projects: V3ProjectListItem[] = [];
+  const v5Projects = await listControlPlaneProjects(prisma);
+  const v5ProjectIds = new Set(v5Projects.map((project) => project.id));
   for (const smallProjectId of await listSmallProjectIds()) {
+    if (v5ProjectIds.has(smallProjectId)) continue;
     const status = await readWorkbenchProjectStatus({ storageRoot, smallProjectId });
     projects.push(projectListItem(status));
+  }
+  for (const project of v5Projects) {
+    projects.push(v5ProjectListItem(project));
   }
   return { projects };
 }
@@ -453,10 +531,204 @@ function projectDetailResponse(status: WorkbenchProjectStatus): V3ProjectDetailR
 function projectListItem(status: WorkbenchProjectStatus): V3ProjectListItem {
   return {
     small_project_id: status.small_project_id,
+    source: "file_system",
     mode: status.mode,
     status: status.overall_status,
     project_root: projectRootRelativePath(status.small_project_id),
   };
+}
+
+type V5ProjectWithRelations = NonNullable<Awaited<ReturnType<typeof readControlPlaneProject>>>;
+
+function v5ProjectListItem(project: V5ProjectWithRelations | Awaited<ReturnType<typeof listControlPlaneProjects>>[number]): V3ProjectListItem {
+  return {
+    small_project_id: project.id,
+    project_id: project.id,
+    title: project.title,
+    content_type: project.contentType,
+    source: "v5_control_plane",
+    mode: "v5_control_plane",
+    status: v5ProjectWorkbenchStatus(project.status),
+    project_root: projectRootRelativePath(project.id),
+  };
+}
+
+function v5ProjectDetailResponse(project: V5ProjectWithRelations): { project: V3ProjectListItem; status: V5WorkbenchProjectDetail } {
+  return {
+    project: v5ProjectListItem(project),
+    status: {
+      schema_version: 1,
+      project_id: project.id,
+      title: project.title,
+      description: project.description,
+      content_type: project.contentType,
+      status: project.status,
+      project_root: projectRootRelativePath(project.id),
+      inputs: project.inputs.map((input) => ({
+        id: input.id,
+        kind: input.kind,
+        status: input.status,
+        original_name: input.originalName,
+        path: input.path,
+        stable_path: input.stablePath,
+        sha256: input.sha256,
+        mime: input.mime,
+        created_at: input.createdAt.toISOString(),
+      })),
+      chains: project.chains.map((chain) => ({
+        id: chain.id,
+        chain_id: chain.chainId,
+        status: chain.status,
+        metrics_json: chain.metricsJson,
+        last_error: chain.lastError,
+        updated_at: chain.updatedAt.toISOString(),
+      })),
+      artifacts: project.artifacts.map((artifact) => ({
+        id: artifact.id,
+        chain_id: artifact.chainId,
+        kind: artifact.kind,
+        path: artifact.path,
+        sha256: artifact.sha256,
+        schema_version: artifact.schemaVersion,
+        status: artifact.status,
+        created_by_run_id: artifact.createdByRunId,
+        created_at: artifact.createdAt.toISOString(),
+      })),
+      runs: project.runs.map((run) => ({
+        id: run.id,
+        status: run.status,
+        mode: run.mode,
+        priority: run.priority,
+        stop_requested: run.stopRequested,
+        created_at: run.createdAt.toISOString(),
+        updated_at: run.updatedAt.toISOString(),
+        tasks: run.tasks.map((task) => ({
+          id: task.id,
+          chain_id: task.chainId,
+          stage: task.stage,
+          status: task.status,
+          last_error: task.lastError,
+          started_at: task.startedAt?.toISOString() ?? null,
+          finished_at: task.finishedAt?.toISOString() ?? null,
+        })),
+        events: run.events.map((event) => ({
+          id: event.id,
+          task_id: event.taskId,
+          event_type: event.eventType,
+          message: event.message,
+          details_json: event.detailsJson,
+          created_at: event.createdAt.toISOString(),
+        })),
+      })),
+    },
+  };
+}
+
+function v5ProjectWorkbenchStatus(status: string): V3ProjectListItem["status"] {
+  if (
+    status === "input_required"
+    || status === "input_uploaded"
+    || status === "input_confirmed"
+    || status === "queued"
+    || status === "running"
+    || status === "stopping"
+    || status === "stopped"
+    || status === "passed"
+    || status === "blocked"
+    || status === "failed"
+  ) {
+    return status;
+  }
+  return "blocked";
+}
+
+async function readV5ProjectFromRoute(rawProjectId: string): Promise<V5ProjectWithRelations | null> {
+  const projectId = decodeRouteId(rawProjectId, "project id");
+  return readControlPlaneProject(prisma, projectId);
+}
+
+async function createV5ProjectResponse(body: Record<string, unknown>): Promise<Record<string, unknown>> {
+  const title = stringBodyValue(body.title);
+  const contentType = stringBodyValue(body.content_type) ?? stringBodyValue(body.contentType);
+  if (!title) throw new ApiRouteError(400, "invalid_project_title", "title is required.");
+  if (!contentType) throw new ApiRouteError(400, "invalid_content_type", "content_type is required.");
+  try {
+    return await createV5Project(prisma, {
+      storageRoot,
+      title,
+      contentType,
+      description: stringBodyValue(body.description),
+    });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    if (/Unsupported V5 chain/.test(message)) {
+      throw new ApiRouteError(400, "unsupported_content_type", message);
+    }
+    throw error;
+  }
+}
+
+async function uploadV5ProjectInputsResponse(rawProjectId: string, request: IncomingMessage): Promise<Record<string, unknown>> {
+  const projectId = decodeRouteId(rawProjectId, "project id");
+  const contentType = request.headers["content-type"];
+  if (typeof contentType !== "string" || !contentType.startsWith("multipart/form-data")) {
+    throw new ApiRouteError(400, "invalid_input_upload", "Input upload must use multipart/form-data.");
+  }
+  let form;
+  try {
+    form = parseMultipartForm(contentType, await readRawRequestBody(request, 100 * 1024 * 1024));
+  } catch (error) {
+    throw new ApiRouteError(400, "invalid_input_upload", error instanceof Error ? error.message : "Invalid multipart upload.");
+  }
+  try {
+    return await uploadV5ProjectInputs(prisma, projectId, {
+      lyricsText: form.fields.get("lyrics_text"),
+      lyricsFile: form.files.get("lyrics_file"),
+      audioFile: form.files.get("audio_file"),
+      replace: form.fields.get("replace") === "true",
+    });
+  } catch (error) {
+    throw v5InputRouteError(error);
+  }
+}
+
+async function confirmV5ProjectInputsResponse(rawProjectId: string): Promise<Record<string, unknown>> {
+  const projectId = decodeRouteId(rawProjectId, "project id");
+  try {
+    return await confirmV5ProjectInputs(prisma, projectId);
+  } catch (error) {
+    throw v5InputRouteError(error);
+  }
+}
+
+async function stopV5RunResponse(rawProjectId: string, rawRunId: string): Promise<Record<string, unknown>> {
+  const projectId = decodeRouteId(rawProjectId, "project id");
+  const runId = decodeRouteId(rawRunId, "run id");
+  try {
+    const result = await requestV5RunStop(prisma, { projectId, runId });
+    return {
+      project_id: projectId,
+      run_id: runId,
+      status: "stop_requested",
+      stopped_task_count: result.stopped_task_count,
+    };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    if (/Missing V5 run/.test(message)) throw new ApiRouteError(404, "run_not_found", message);
+    throw error;
+  }
+}
+
+function v5InputRouteError(error: unknown): ApiRouteError {
+  const message = error instanceof Error ? error.message : String(error);
+  if (/Missing V5 project/.test(message)) return new ApiRouteError(404, "project_not_found", message);
+  if (/requires active lyrics and active audio/.test(message)) return new ApiRouteError(409, "inputs_incomplete", message);
+  if (/queued, running, or stopping/.test(message)) return new ApiRouteError(409, "active_run_exists", message);
+  if (/Cannot replace inputs while/.test(message)) return new ApiRouteError(409, "input_replacement_forbidden", message);
+  if (/replace=true/.test(message)) return new ApiRouteError(409, "input_replacement_required", message);
+  if (/must be \.md or \.txt|must be \.mp3 or \.wav/.test(message)) return new ApiRouteError(400, "unsupported_input_type", message);
+  if (/Upload requires| is empty/.test(message)) return new ApiRouteError(400, "invalid_input_upload", message);
+  return new ApiRouteError(500, "internal_error", message);
 }
 
 function projectRootRelativePath(smallProjectId: string): string {
@@ -2016,6 +2288,20 @@ async function readJsonRequestBody(request: IncomingMessage): Promise<Record<str
   return parsed;
 }
 
+async function readRawRequestBody(request: IncomingMessage, limitBytes: number): Promise<Buffer> {
+  const chunks: Buffer[] = [];
+  let total = 0;
+  for await (const chunk of request) {
+    const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+    total += buffer.byteLength;
+    if (total > limitBytes) {
+      throw new ApiRouteError(413, "request_too_large", `Request body must be ${limitBytes} bytes or smaller.`);
+    }
+    chunks.push(buffer);
+  }
+  return Buffer.concat(chunks);
+}
+
 async function readOptionalRecord(filePath: string): Promise<Record<string, unknown> | null> {
   try {
     const parsed: unknown = JSON.parse(await readFile(filePath, "utf8"));
@@ -2081,6 +2367,17 @@ function assertSafeRouteId(value: string, label: string): void {
   if (!/^[a-zA-Z0-9_.-]+$/.test(value)) {
     throw new ApiRouteError(400, "invalid_route_parameter", `${label} may only contain letters, numbers, underscores, hyphens, and periods.`);
   }
+}
+
+function decodeRouteId(rawValue: string, label: string): string {
+  let value: string;
+  try {
+    value = decodeURIComponent(rawValue);
+  } catch {
+    throw new ApiRouteError(400, "invalid_route_parameter", `${label} must be URL-decodable.`);
+  }
+  assertSafeRouteId(value, label);
+  return value;
 }
 
 function stringBodyValue(value: unknown): string | undefined {

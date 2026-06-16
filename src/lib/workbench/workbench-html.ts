@@ -11,12 +11,81 @@ export type WorkbenchChainSummary = {
   metrics?: Record<string, string | number | boolean>;
 };
 
+export type V5WorkbenchProjectDetail = {
+  schema_version: number;
+  project_id: string;
+  title: string;
+  description?: string | null;
+  content_type: string;
+  status: string;
+  project_root: string;
+  inputs: Array<{
+    id: string;
+    kind: string;
+    status: string;
+    original_name: string;
+    path: string;
+    stable_path: string;
+    sha256: string;
+    mime: string;
+    created_at: string;
+  }>;
+  chains: Array<{
+    id: string;
+    chain_id: string;
+    status: string;
+    metrics_json?: string | null;
+    last_error?: string | null;
+    updated_at: string;
+  }>;
+  artifacts: Array<{
+    id: string;
+    chain_id?: string | null;
+    kind: string;
+    path: string;
+    sha256: string;
+    schema_version?: string | null;
+    status: string;
+    created_by_run_id?: string | null;
+    created_at: string;
+  }>;
+  runs: Array<{
+    id: string;
+    status: string;
+    mode: string;
+    priority: number;
+    stop_requested: boolean;
+    created_at: string;
+    updated_at: string;
+    tasks: Array<{
+      id: string;
+      chain_id: string;
+      stage: string;
+      status: string;
+      last_error?: string | null;
+      started_at?: string | null;
+      finished_at?: string | null;
+    }>;
+    events: Array<{
+      id: string;
+      task_id?: string | null;
+      event_type: string;
+      message: string;
+      details_json?: string | null;
+      created_at: string;
+    }>;
+  }>;
+};
+
 export function renderWorkbenchProjectsPage(input: { projects: V3ProjectListItem[] }): string {
   const rows = input.projects.length === 0
-    ? `<tr><td colspan="5">No projects found.</td></tr>`
+    ? `<tr><td colspan="8">No projects found.</td></tr>`
     : input.projects.map((project) => `
       <tr>
         <td><a href="/projects/${encodeURIComponent(project.small_project_id)}">${escapeHtml(project.small_project_id)}</a></td>
+        <td>${escapeHtml(project.title ?? "")}</td>
+        <td>${escapeHtml(project.content_type ?? "")}</td>
+        <td>${badge(project.source ?? "file_system")}</td>
         <td>${badge(project.mode)}</td>
         <td>${badge(project.status)}</td>
         <td><code>${escapeHtml(project.project_root)}</code></td>
@@ -30,11 +99,19 @@ export function renderWorkbenchProjectsPage(input: { projects: V3ProjectListItem
     </header>
     <section>
       <h2>Projects</h2>
+      <form data-action="create-v5-project" class="toolbar">
+        <label>Title <input name="title" required></label>
+        <label>Content type <select name="content_type"><option value="chat_dialogue_mv">chat_dialogue_mv</option></select></label>
+        <label>Description <input name="description"></label>
+        <button type="submit">Create V5 Project</button>
+      </form>
+      <pre id="project-action-result" aria-live="polite"></pre>
       <table>
-        <thead><tr><th>Project</th><th>Mode</th><th>Status</th><th>Root</th><th></th></tr></thead>
+        <thead><tr><th>Project</th><th>Title</th><th>Content</th><th>Source</th><th>Mode</th><th>Status</th><th>Root</th><th></th></tr></thead>
         <tbody>${rows}</tbody>
       </table>
     </section>
+    ${projectsClientScript()}
   `);
 }
 
@@ -78,6 +155,137 @@ export function renderWorkbenchProjectDetailPage(input: {
     </div>
     ${clientScript(status.small_project_id)}
   `);
+}
+
+export function renderWorkbenchV5ProjectDetailPage(input: { detail: V5WorkbenchProjectDetail }): string {
+  const detail = input.detail;
+  return layout(`${detail.title} - Qivance V5 Workbench`, `
+    <header class="page-header">
+      <a href="/projects">Projects</a>
+      <h1>${escapeHtml(detail.title)}</h1>
+      <div class="meta">
+        ${badge("v5_control_plane")}
+        ${badge(detail.content_type)}
+        ${badge(detail.status)}
+      </div>
+      <p><code>${escapeHtml(detail.project_id)}</code> <code>${escapeHtml(detail.project_root)}</code></p>
+    </header>
+    <div class="grid">
+      ${section("V5 Inputs", v5InputsBlock(detail))}
+      ${section("Run Control", v5RunControlBlock(detail))}
+      ${section("Artifacts", v5ArtifactsBlock(detail))}
+      ${section("Task Events", v5EventsBlock(detail))}
+    </div>
+    ${v5ClientScript(detail.project_id)}
+  `);
+}
+
+function v5InputsBlock(detail: V5WorkbenchProjectDetail): string {
+  const inputRows = detail.inputs.length === 0
+    ? `<tr><td colspan="6">No inputs.</td></tr>`
+    : detail.inputs.map((input) => `
+      <tr>
+        <td>${badge(input.kind)}</td>
+        <td>${badge(input.status)}</td>
+        <td>${escapeHtml(input.original_name)}</td>
+        <td><code>${escapeHtml(input.path)}</code></td>
+        <td><code>${escapeHtml(input.stable_path)}</code></td>
+        <td><small>${escapeHtml(input.sha256.slice(0, 12))}</small></td>
+      </tr>
+    `).join("");
+  const canConfirm = hasActiveV5Input(detail, "lyrics") && hasActiveV5Input(detail, "audio") && !hasActiveV5Run(detail);
+  return `
+    <table>
+      <thead><tr><th>Kind</th><th>Status</th><th>Name</th><th>Path</th><th>Stable</th><th>SHA</th></tr></thead>
+      <tbody>${inputRows}</tbody>
+    </table>
+    <form data-action="v5-input-upload">
+      <label>Lyrics text <textarea name="lyrics_text" rows="5"></textarea></label>
+      <label>Lyrics file <input type="file" name="lyrics_file" accept=".md,.txt,text/markdown,text/plain"></label>
+      <label>Audio file <input type="file" name="audio_file" accept=".mp3,.wav,audio/mpeg,audio/wav"></label>
+      <label class="inline"><input type="checkbox" name="replace" value="true"> Replace active inputs</label>
+      <button type="submit">Upload Inputs</button>
+    </form>
+    <p><button data-action="v5-confirm-inputs" ${canConfirm ? "" : "disabled"}>Confirm Inputs</button></p>
+    <pre id="action-result" aria-live="polite"></pre>
+  `;
+}
+
+function v5RunControlBlock(detail: V5WorkbenchProjectDetail): string {
+  if (detail.runs.length === 0) return `<p>No scheduler runs.</p>`;
+  return detail.runs.map((run) => {
+    const canStop = !["passed", "failed", "blocked", "stopped"].includes(run.status);
+    return `
+      <article class="run-block">
+        <header>
+          <h3>${escapeHtml(run.id)}</h3>
+          ${badge(run.status)}
+          ${badge(run.mode)}
+          <button data-action="v5-stop-run" data-run-id="${escapeHtml(run.id)}" ${canStop ? "" : "disabled"}>Stop Run</button>
+        </header>
+        <table>
+          <thead><tr><th>Stage</th><th>Status</th><th>Error</th></tr></thead>
+          <tbody>${run.tasks.map((task) => `
+            <tr>
+              <td><code>${escapeHtml(task.stage)}</code></td>
+              <td>${badge(task.status)}</td>
+              <td>${task.last_error ? escapeHtml(task.last_error) : ""}</td>
+            </tr>
+          `).join("")}</tbody>
+        </table>
+      </article>
+    `;
+  }).join("");
+}
+
+function v5ArtifactsBlock(detail: V5WorkbenchProjectDetail): string {
+  const rows = [
+    ["final_mp4", "exports/chat_dialogue_mv/final.mp4"],
+    ["visual_mp4", "exports/chat_dialogue_mv/visual.mp4"],
+    ["render_manifest", "exports/chat_dialogue_mv/render_manifest.json"],
+    ["qa_report", "data/chains/chat_dialogue_mv/qa_report.json"],
+  ].map(([label, artifactPath]) => {
+    const artifact = detail.artifacts.find((item) => item.path === artifactPath);
+    return `
+      <tr>
+        <td><code>${escapeHtml(label)}</code></td>
+        <td>${artifact ? badge(artifact.status) : `<span class="missing">missing</span>`}</td>
+        <td>${artifact ? v5ArtifactLink(detail.project_id, artifact.path) : `<code>${escapeHtml(artifactPath)}</code>`}</td>
+        <td>${artifact ? `<small>${escapeHtml(artifact.sha256.slice(0, 12))}</small>` : ""}</td>
+      </tr>
+    `;
+  }).join("");
+  return `<table><thead><tr><th>Artifact</th><th>Status</th><th>Path</th><th>SHA</th></tr></thead><tbody>${rows}</tbody></table>`;
+}
+
+function v5EventsBlock(detail: V5WorkbenchProjectDetail): string {
+  const events = detail.runs.flatMap((run) => run.events.map((event) => ({ ...event, run_id: run.id })))
+    .sort((a, b) => b.created_at.localeCompare(a.created_at))
+    .slice(0, 20);
+  if (events.length === 0) return `<p>No events.</p>`;
+  return `<table><thead><tr><th>Run</th><th>Event</th><th>Message</th><th>At</th></tr></thead><tbody>${events.map((event) => `
+    <tr>
+      <td><code>${escapeHtml(event.run_id)}</code></td>
+      <td>${badge(event.event_type)}</td>
+      <td>${escapeHtml(event.message)}</td>
+      <td><small>${escapeHtml(event.created_at)}</small></td>
+    </tr>
+  `).join("")}</tbody></table>`;
+}
+
+function hasActiveV5Input(detail: V5WorkbenchProjectDetail, kind: string): boolean {
+  return detail.inputs.some((input) => input.kind === kind && input.status === "active");
+}
+
+function hasActiveV5Run(detail: V5WorkbenchProjectDetail): boolean {
+  return detail.runs.some((run) => ["queued", "running", "stopping"].includes(run.status));
+}
+
+function v5ArtifactLink(projectId: string, artifactPath: string): string {
+  if (artifactPath === "exports/chat_dialogue_mv/final.mp4") {
+    return `<a href="/api/projects/${encodeURIComponent(projectId)}/chains/chat-dialogue-mv/export/final.mp4">final.mp4</a>`;
+  }
+  return `<a href="/projects/${encodeURIComponent(projectId)}/download?path=${encodeURIComponent(artifactPath)}">${escapeHtml(artifactPath)}</a>`;
 }
 
 function blockingReasons(reasons: WorkbenchProjectStatus["blocking_reasons"]): string {
@@ -246,6 +454,73 @@ function badge(value: string): string {
   return `<span class="badge ${cssToken(value)}">${escapeHtml(value)}</span>`;
 }
 
+function projectsClientScript(): string {
+  return `<script>
+    const projectResult = document.getElementById("project-action-result");
+    document.querySelector("[data-action='create-v5-project']")?.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      if (projectResult) projectResult.textContent = "Running...";
+      const data = new FormData(event.currentTarget);
+      const response = await fetch("/api/projects", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          title: data.get("title"),
+          content_type: data.get("content_type"),
+          description: data.get("description"),
+        }),
+      });
+      const json = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        if (projectResult) projectResult.textContent = JSON.stringify(json, null, 2);
+        return;
+      }
+      location.href = "/projects/" + encodeURIComponent(json.project_id);
+    });
+  </script>`;
+}
+
+function v5ClientScript(projectId: string): string {
+  return `<script>
+    const projectId = ${JSON.stringify(projectId)};
+    const result = document.getElementById("action-result");
+    async function showResponse(response) {
+      const json = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        if (result) result.textContent = JSON.stringify(json, null, 2);
+        return;
+      }
+      location.reload();
+    }
+    document.querySelector("[data-action='v5-input-upload']")?.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      if (result) result.textContent = "Running...";
+      await showResponse(await fetch("/api/projects/" + encodeURIComponent(projectId) + "/inputs", {
+        method: "POST",
+        body: new FormData(event.currentTarget),
+      }));
+    });
+    document.querySelector("[data-action='v5-confirm-inputs']")?.addEventListener("click", async () => {
+      if (result) result.textContent = "Running...";
+      await showResponse(await fetch("/api/projects/" + encodeURIComponent(projectId) + "/inputs/confirm", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: "{}",
+      }));
+    });
+    document.querySelectorAll("[data-action='v5-stop-run']").forEach((button) => {
+      button.addEventListener("click", async () => {
+        const runId = button.getAttribute("data-run-id");
+        if (!runId) return;
+        if (result) result.textContent = "Running...";
+        await showResponse(await fetch("/api/projects/" + encodeURIComponent(projectId) + "/runs/" + encodeURIComponent(runId) + "/stop", {
+          method: "POST",
+        }));
+      });
+    });
+  </script>`;
+}
+
 function clientScript(projectId: string): string {
   return `<script>
     const projectId = ${JSON.stringify(projectId)};
@@ -289,9 +564,11 @@ function layout(title: string, body: string): string {
   <style>
     body{font-family:system-ui,-apple-system,Segoe UI,sans-serif;margin:0;background:#f6f7f9;color:#15181d;line-height:1.45}
     .page-header{padding:24px 32px;background:#fff;border-bottom:1px solid #d8dde6}
-    h1{margin:8px 0 4px;font-size:28px} h2{font-size:16px;margin:0 0 12px}
+    h1{margin:8px 0 4px;font-size:28px} h2{font-size:16px;margin:0 0 12px} h3{font-size:14px;margin:0 0 8px}
     .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(320px,1fr));gap:16px;padding:16px 32px 32px}
     .panel,.notice{background:#fff;border:1px solid #d8dde6;border-radius:8px;padding:16px}
+    .toolbar{display:grid;grid-template-columns:minmax(180px,1fr) minmax(180px,240px) minmax(180px,1fr) auto;gap:12px;align-items:end;margin:0 0 12px}
+    .run-block{border-top:1px solid #e5e9f0;padding-top:12px;margin-top:12px}
     table{width:100%;border-collapse:collapse;background:#fff} th,td{padding:10px;border-bottom:1px solid #e5e9f0;text-align:left;vertical-align:top}
     code{font-size:12px;background:#eef1f5;padding:2px 4px;border-radius:4px}
     .badge{display:inline-block;border:1px solid #c4cad4;border-radius:999px;padding:2px 8px;font-size:12px;background:#f8fafc;margin-right:4px}
@@ -299,7 +576,9 @@ function layout(title: string, body: string): string {
     .exists{color:#176b35;font-weight:600}.missing{color:#9d2b2b;font-weight:600}
     .button,button{border:1px solid #aab2bf;border-radius:6px;background:#fff;padding:7px 10px;color:#111;text-decoration:none;cursor:pointer}
     button:disabled{opacity:.5;cursor:not-allowed} label{display:block;margin:8px 0} input,select,textarea{width:100%;box-sizing:border-box;border:1px solid #c4cad4;border-radius:6px;padding:8px}
+    .inline{display:flex;align-items:center;gap:8px}.inline input{width:auto}
     iframe{width:100%;min-height:320px;border:1px solid #c4cad4;border-radius:6px;background:#fff}.steps li{margin:8px 0} pre{white-space:pre-wrap;font-size:12px}
+    @media (max-width:760px){.toolbar{grid-template-columns:1fr}.page-header{padding:20px}.grid{padding:12px;grid-template-columns:1fr}}
   </style>
 </head>
 <body>${body}</body>

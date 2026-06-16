@@ -62,6 +62,26 @@ test("uses diagnostic fallback only when allowed", () => {
   assert.equal(timings.timings[0]?.timing_source, "diagnostic_even_split");
 });
 
+test("matches WhisperX text-only word timing in production fallback path", () => {
+  const lineMap = buildLyricsLineMap({ lyricsText: "Q: hello world\nA: answer now\n" });
+  const timings = buildLineTimings({
+    lineMap,
+    sectionMap: sectionMapFixture(),
+    lyricWordTiming: {
+      words: [
+        { text: "hello", start_sec: 0.1, end_sec: 0.4 },
+        { text: "world", start_sec: 0.5, end_sec: 0.9 },
+        { text: "answer", start_sec: 1.0, end_sec: 1.4 },
+        { text: "now", start_sec: 1.5, end_sec: 1.9 },
+      ],
+    },
+  });
+
+  assert.deepEqual(timings.issues, []);
+  assert.equal(timings.diagnosticFallbackUsed, false);
+  assert.equal(timings.timings.length, 2);
+});
+
 function sectionMapFixture() {
   return {
     duration_sec: 4,
