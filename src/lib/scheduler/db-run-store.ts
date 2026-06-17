@@ -45,7 +45,7 @@ export async function requestV5RunStop(
     include: { tasks: true },
   });
   if (!run || run.projectId !== input.projectId) throw new Error(`Missing V5 run: ${input.runId}`);
-  if (run.status === "passed" || run.status === "failed" || run.status === "stopped") {
+  if (run.status === "ready" || run.status === "passed" || run.status === "failed" || run.status === "stopped") {
     return { stopped_task_count: 0 };
   }
 
@@ -112,7 +112,7 @@ export async function updateV5RunTerminalStatus(prisma: QivancePrismaClient, run
     return "blocked";
   }
   if (run.tasks.length > 0 && run.tasks.every((task) => task.status === "stopped" || task.status === "passed")) {
-    const nextStatus = run.stopRequested && run.tasks.some((task) => task.status === "stopped") ? "stopped" : "passed";
+    const nextStatus = run.stopRequested && run.tasks.some((task) => task.status === "stopped") ? "stopped" : passedStatusForRun(run);
     await writeRunProjectStatus(prisma, run, nextStatus);
     return nextStatus;
   }
@@ -123,6 +123,25 @@ export async function updateV5RunTerminalStatus(prisma: QivancePrismaClient, run
   const nextStatus = run.stopRequested ? "stopping" : "queued";
   await writeRunProjectStatus(prisma, run, nextStatus);
   return nextStatus;
+}
+
+function passedStatusForRun(run: SchedulerRun & { tasks: SchedulerTask[] }): "ready" | "passed" {
+  if (
+    run.mode === "preview"
+    && run.tasks.length > 0
+    && run.tasks.every((task) => task.chainId === "video_chain")
+    && !run.tasks.some((task) => isVideoChainExportStage(task.stage))
+  ) {
+    return "ready";
+  }
+  return "passed";
+}
+
+function isVideoChainExportStage(stage: string): boolean {
+  return stage === "render_video_visual"
+    || stage === "mux_video_final"
+    || stage === "video_qa_report"
+    || stage === "write_video_manifest";
 }
 
 async function writeRunProjectStatus(

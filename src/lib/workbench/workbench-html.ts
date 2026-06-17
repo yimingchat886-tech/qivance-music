@@ -185,7 +185,7 @@ export function renderWorkbenchV5ProjectDetailPage(input: { detail: V5WorkbenchP
 export function renderWorkbenchV6VideoChainPage(input: { detail: V5WorkbenchProjectDetail }): string {
   const detail = input.detail;
   const previewReady = hasArtifact(detail, "data/chains/video_chain/frame_contracts.json");
-  const finalReady = hasArtifact(detail, "exports/video_chain/final.mp4");
+  const finalExport = videoChainFinalExportState(detail);
   return layout(`${detail.title} - Qivance V6 video_chain`, `
     <header class="page-header">
       <a href="/projects/${encodeURIComponent(detail.project_id)}">Project</a>
@@ -201,7 +201,7 @@ export function renderWorkbenchV6VideoChainPage(input: { detail: V5WorkbenchProj
       ${section("Run Control", v5RunControlBlock(detail))}
       ${section("html-video Preview", videoChainPreviewBlock(detail, previewReady))}
       ${section("LLM Revision", videoChainRevisionBlock(detail, previewReady))}
-      ${section("Export", videoChainExportBlock(detail, finalReady))}
+      ${section("Export", videoChainExportBlock(detail, finalExport))}
       ${section("Artifacts", v5ArtifactsBlock(detail))}
       ${section("Task Events", v5EventsBlock(detail))}
     </div>
@@ -290,7 +290,7 @@ function v5InputsBlock(detail: V5WorkbenchProjectDetail): string {
 function v5RunControlBlock(detail: V5WorkbenchProjectDetail): string {
   if (detail.runs.length === 0) return `<p>No scheduler runs.</p>`;
   return detail.runs.map((run) => {
-    const canStop = !["passed", "failed", "blocked", "stopped"].includes(run.status);
+    const canStop = !["ready", "passed", "failed", "blocked", "stopped"].includes(run.status);
     return `
       <article class="run-block">
         <header>
@@ -316,12 +316,12 @@ function v5RunControlBlock(detail: V5WorkbenchProjectDetail): string {
 
 function v5ArtifactsBlock(detail: V5WorkbenchProjectDetail): string {
   const rows = artifactPathsForDetail(detail).map(([label, artifactPath]) => {
-    const artifact = detail.artifacts.find((item) => item.path === artifactPath);
+    const artifact = artifactForPath(detail, artifactPath);
     return `
       <tr>
         <td><code>${escapeHtml(label)}</code></td>
         <td>${artifact ? badge(artifact.status) : `<span class="missing">missing</span>`}</td>
-        <td>${artifact ? v5ArtifactLink(detail.project_id, artifact.path) : `<code>${escapeHtml(artifactPath)}</code>`}</td>
+        <td>${artifact ? v5ArtifactLink(detail.project_id, artifact.path, artifact.status) : `<code>${escapeHtml(artifactPath)}</code>`}</td>
         <td>${artifact ? `<small>${escapeHtml(artifact.sha256.slice(0, 12))}</small>` : ""}</td>
       </tr>
     `;
@@ -354,6 +354,11 @@ function hasActiveV5Run(detail: V5WorkbenchProjectDetail): boolean {
 
 function hasArtifact(detail: V5WorkbenchProjectDetail, artifactPath: string): boolean {
   return detail.artifacts.some((artifact) => artifact.path === artifactPath && artifact.status === "current");
+}
+
+function artifactForPath(detail: V5WorkbenchProjectDetail, artifactPath: string): V5WorkbenchProjectDetail["artifacts"][number] | undefined {
+  return detail.artifacts.find((artifact) => artifact.path === artifactPath && artifact.status === "current")
+    ?? detail.artifacts.find((artifact) => artifact.path === artifactPath);
 }
 
 function artifactPathsForDetail(detail: V5WorkbenchProjectDetail): Array<[string, string]> {
@@ -401,22 +406,34 @@ function videoChainRevisionBlock(detail: V5WorkbenchProjectDetail, previewReady:
   `;
 }
 
-function videoChainExportBlock(detail: V5WorkbenchProjectDetail, finalReady: boolean): string {
-  const download = finalReady
+type VideoChainFinalExportState = {
+  status: "current" | "stale" | "missing";
+};
+
+function videoChainFinalExportState(detail: V5WorkbenchProjectDetail): VideoChainFinalExportState {
+  const artifact = artifactForPath(detail, "exports/video_chain/final.mp4");
+  if (!artifact) return { status: "missing" };
+  return artifact.status === "current" ? { status: "current" } : { status: "stale" };
+}
+
+function videoChainExportBlock(detail: V5WorkbenchProjectDetail, finalExport: VideoChainFinalExportState): string {
+  const download = finalExport.status === "current"
     ? `<a class="button" href="/api/projects/${encodeURIComponent(detail.project_id)}/chains/video-chain/export/final.mp4">Download final MP4</a>`
     : `<button disabled>Download final MP4</button>`;
   return `
+    <p>Final export ${badge(finalExport.status)}</p>
     <p><button data-action="video-chain-export">Render final.mp4</button></p>
     <p>${download}</p>
     <pre id="export-result" aria-live="polite"></pre>
   `;
 }
 
-function v5ArtifactLink(projectId: string, artifactPath: string): string {
+function v5ArtifactLink(projectId: string, artifactPath: string, artifactStatus = "current"): string {
   if (artifactPath === "exports/chat_dialogue_mv/final.mp4") {
     return `<a href="/api/projects/${encodeURIComponent(projectId)}/chains/chat-dialogue-mv/export/final.mp4">final.mp4</a>`;
   }
   if (artifactPath === "exports/video_chain/final.mp4") {
+    if (artifactStatus !== "current") return `<code>${escapeHtml(artifactPath)}</code>`;
     return `<a href="/api/projects/${encodeURIComponent(projectId)}/chains/video-chain/export/final.mp4">final.mp4</a>`;
   }
   return `<a href="/projects/${encodeURIComponent(projectId)}/download?path=${encodeURIComponent(artifactPath)}">${escapeHtml(artifactPath)}</a>`;

@@ -47,6 +47,12 @@ export type V5SchedulerTaskSeed = {
   output_artifacts: string[];
 };
 
+export type V5SchedulerTaskPhase = "preview" | "export";
+
+export type V5SchedulerTaskSeedOptions = {
+  phase?: V5SchedulerTaskPhase;
+};
+
 export const CHAT_DIALOGUE_MV_CHAIN: V5ChainRegistryEntry = {
   chain_id: "chat_dialogue_mv",
   display_name: "Chat Dialogue MV",
@@ -146,14 +152,32 @@ export function requireEnabledV5Chain(chainId: string): V5ChainRegistryEntry {
   return entry;
 }
 
-export function buildV5SchedulerTaskSeeds(chainId: string): V5SchedulerTaskSeed[] {
+export function buildV5SchedulerTaskSeeds(chainId: string, options: V5SchedulerTaskSeedOptions = {}): V5SchedulerTaskSeed[] {
   const entry = requireEnabledV5Chain(chainId);
-  return entry.stages.map((stage, index) => ({
+  const stages = stagesForTaskSeeds(entry, options);
+  return stages.map((stage, index) => ({
     stage,
-    dependencies: index === 0 ? [] : [entry.stages[index - 1]!],
+    dependencies: index === 0 ? [] : [stages[index - 1]!],
     resource_requirements: entry.resources_by_stage[stage],
     output_artifacts: outputArtifactsForStage(entry.chain_id, stage),
   }));
+}
+
+function stagesForTaskSeeds(entry: V5ChainRegistryEntry, options: V5SchedulerTaskSeedOptions): V5ChainStage[] {
+  if (entry.chain_id !== "video_chain") return entry.stages;
+  if (options.phase === "export") {
+    return [
+      "render_video_visual",
+      "mux_video_final",
+      "video_qa_report",
+      "write_video_manifest",
+    ];
+  }
+  return [
+    "run_timing_pipeline",
+    "prepare_video_context",
+    "build_video_frames",
+  ];
 }
 
 function outputArtifactsForStage(chainId: V5ChainId, stage: V5ChainStage): string[] {

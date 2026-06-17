@@ -18,6 +18,7 @@ import { muxLockedAudio as muxLockedAudioDefault } from "../export/mux-locked-au
 import { buildRenderManifestV4, validateRenderManifestV4, type RenderManifestV4EvidenceRef } from "../export/render-manifest-v4.ts";
 import { sha256File, writeJson } from "../fs-utils.ts";
 import { resolveMediaE2EPythonEnv } from "../media-e2e/python-env.ts";
+import { parseLockedInputSnapshot } from "../project-core/locked-input-snapshot.ts";
 import { buildSectionMapFromEvidence } from "../section-map/section-map-builder.ts";
 import {
   buildVideoChainFrames,
@@ -29,7 +30,6 @@ import {
   type VideoChainDeps,
 } from "../video-chain/video-chain-runner.ts";
 import { runWhisperXAlignment as runWhisperXAlignmentDefault } from "../word-alignment/whisperx-runner.ts";
-import type { QivancePrismaClient } from "../db/prisma-client.ts";
 import type { V5SchedulerTaskHandlerInput, V5SchedulerTaskHandlers } from "./server-runner-loop.ts";
 
 const execFileAsync = promisify(execFileCallback);
@@ -236,11 +236,8 @@ async function writeQaReportTask({ prisma, task }: V5SchedulerTaskHandlerInput, 
 }
 
 async function writeManifestTask({ prisma, run, task }: V5SchedulerTaskHandlerInput, deps: V5TaskHandlerDeps): Promise<void> {
-  const project = await prisma.project.findUniqueOrThrow({
-    where: { id: task.projectId },
-    include: { inputs: true },
-  });
-  await assertLockedInputSha(prisma, project.id);
+  const project = await prisma.project.findUniqueOrThrow({ where: { id: task.projectId } });
+  await assertLockedInputSha(project.projectRoot, run.lockedInputsJson);
   const finalProbe = await ffprobeJson(path.join(project.projectRoot, "exports/chat_dialogue_mv/final.mp4"), deps);
   const audioProbe = await ffprobeJson(path.join(project.projectRoot, "active_music_take.mp3"), deps);
   const audioStreamCount = streamCount(finalProbe, "audio");
@@ -286,9 +283,9 @@ async function prepareVideoContextTask({ prisma, task }: V5SchedulerTaskHandlerI
   await prepareVideoChainContext(project, deps);
 }
 
-async function buildVideoFramesTask({ prisma, task }: V5SchedulerTaskHandlerInput, deps: V5TaskHandlerDeps): Promise<void> {
+async function buildVideoFramesTask({ prisma, task }: V5SchedulerTaskHandlerInput, deps: V5TaskHandlerDeps): ReturnType<typeof buildVideoChainFrames> {
   const project = await prisma.project.findUniqueOrThrow({ where: { id: task.projectId } });
-  await buildVideoChainFrames(project, deps);
+  return buildVideoChainFrames(project, deps);
 }
 
 async function renderVideoVisualTask({ prisma, task }: V5SchedulerTaskHandlerInput, deps: V5TaskHandlerDeps): Promise<void> {
@@ -308,7 +305,7 @@ async function writeVideoQaReportTask({ prisma, task }: V5SchedulerTaskHandlerIn
 
 async function writeVideoManifestTask({ prisma, run, task }: V5SchedulerTaskHandlerInput, deps: V5TaskHandlerDeps): Promise<void> {
   const project = await prisma.project.findUniqueOrThrow({ where: { id: task.projectId } });
-  await assertLockedInputSha(prisma, project.id);
+  await assertLockedInputSha(project.projectRoot, run.lockedInputsJson);
   await writeVideoChainManifest(project, run.id, deps);
   await prisma.chain.updateMany({
     where: { projectId: project.id, chainId: "video_chain" },
@@ -320,12 +317,12 @@ async function writeVideoManifestTask({ prisma, run, task }: V5SchedulerTaskHand
   });
 }
 
-async function assertLockedInputSha(prisma: QivancePrismaClient, projectId: string): Promise<void> {
-  const project = await prisma.project.findUniqueOrThrow({ where: { id: projectId }, include: { inputs: true } });
-  for (const input of project.inputs.filter((item) => item.status === "active")) {
-    const stableSha = await sha256File(path.join(project.projectRoot, input.stablePath));
+async function assertLockedInputSha(projectRoot: string, lockedInputsJson: string | null): Promise<void> {
+  const lockedInputs = parseLockedInputSnapshot(lockedInputsJson);
+  for (const input of lockedInputs.inputs) {
+    const stableSha = await sha256File(path.join(projectRoot, input.stable_path));
     if (stableSha !== input.sha256) {
-      throw new Error(`artifact_inconsistent: locked ${input.kind} sha does not match ProjectInput ${input.id}`);
+      throw new Error(`artifact_inconsistent: locked ${input.kind} sha does not match locked input ${input.id}`);
     }
   }
 }

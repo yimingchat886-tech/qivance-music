@@ -7,6 +7,7 @@ import type { Project as DbProject } from "@prisma/client";
 import { resolveSmallProjectPaths, type SmallProjectPaths } from "../project-core/paths.ts";
 import type { SectionMapLike } from "../chat-dialogue/line-timing.ts";
 import { muxLockedAudio as muxLockedAudioDefault } from "../export/mux-locked-audio.ts";
+import { validateRenderManifestV6, type RenderManifestV6 } from "../export/render-manifest-v6.ts";
 import { sha256File, writeJson } from "../fs-utils.ts";
 import { buildAgentContext } from "../video-contract/agent-context.schema.ts";
 import { validateAnimationPlan, type AnimationPlan } from "../video-contract/animation-plan.schema.ts";
@@ -32,6 +33,16 @@ export type VideoChainDeps = {
   ffprobeJson?: (filePath: string) => Promise<Record<string, unknown>>;
 };
 
+export type VideoChainOutputArtifactRef = {
+  path: string;
+  kind?: string;
+  schemaVersion?: string | null;
+};
+
+export type VideoChainFrameBuildResult = {
+  outputArtifacts: VideoChainOutputArtifactRef[];
+};
+
 export async function prepareVideoChainContext(project: DbProject, deps: VideoChainDeps = {}): Promise<void> {
   const sourceImport = await ensureBackgroundVideoImport(project, deps);
   const sectionMap = await readProjectJson<SectionMapLike>(project.projectRoot, "data/timing/section_map.json");
@@ -47,7 +58,7 @@ export async function prepareVideoChainContext(project: DbProject, deps: VideoCh
   await writeJson(path.join(project.projectRoot, "data/chains/video_chain/video_animation_plan.json"), animationPlan);
 }
 
-export async function buildVideoChainFrames(project: DbProject, deps: VideoChainDeps = {}): Promise<void> {
+export async function buildVideoChainFrames(project: DbProject, deps: VideoChainDeps = {}): Promise<VideoChainFrameBuildResult> {
   const paths = projectPaths(project);
   const sourceImport = await readProjectJson<SourceVideoImportFile>(project.projectRoot, "data/source/source_video_import.json");
   const animationPlan = await readProjectJson<AnimationPlan>(project.projectRoot, "data/chains/video_chain/video_animation_plan.json");
@@ -115,12 +126,19 @@ V6 video_chain requirements:
       "data/source/source_video_import.json",
     ],
   });
-  await writeAgentRunLog({ paths, log });
+  const agentRun = await writeAgentRunLog({ paths, log });
   if (!log.validation.passed) {
     throw new Error(`video_chain_agent_failed: ${log.validation.issues.join("; ")}`);
   }
   await syncProjectFramesFromContracts(paths, frameContracts);
   await copyChainFrameContracts(project.projectRoot, frameContracts);
+  return {
+    outputArtifacts: [{
+      path: agentRun.path,
+      kind: "agent_run",
+      schemaVersion: String(log.schema_version),
+    }],
+  };
 }
 
 export async function renderVideoChainVisual(project: DbProject, deps: VideoChainDeps = {}): Promise<void> {
@@ -160,7 +178,7 @@ export async function writeVideoChainManifest(project: DbProject, runId: string,
   const sourceImport = await readProjectJson<SourceVideoImportFile>(project.projectRoot, "data/source/source_video_import.json");
   const finalProbe = await ffprobeJson(path.join(project.projectRoot, "exports/video_chain/final.mp4"), deps);
   const audioProbe = await ffprobeJson(path.join(project.projectRoot, "active_music_take.mp3"), deps);
-  const manifest = {
+  const manifest: RenderManifestV6 = {
     schema_version: 6,
     mode: "production",
     chain: {
@@ -203,6 +221,8 @@ export async function writeVideoChainManifest(project: DbProject, runId: string,
       html_video_agent_required: true,
     },
   };
+  const validation = validateRenderManifestV6(manifest);
+  if (!validation.ok) throw new Error(`render_manifest_v6_invalid: ${validation.issues.join("; ")}`);
   await writeJson(path.join(project.projectRoot, "exports/video_chain/render_manifest.json"), manifest);
 }
 
@@ -225,6 +245,11 @@ export async function validateVideoChainBackgroundFrames(input: {
       }
       throw error;
     }
+    const frameIssues = validateVideoChainFrameHtml({
+      html,
+      sourceVideoPath: input.sourceVideoPath,
+    });
+    issues.push(...frameIssues.map((issue) => `${frame.allowedHtmlPath}: ${issue}`));
     if (!videoSources(html).includes(input.sourceVideoPath)) {
       issues.push(`${frame.allowedHtmlPath}: missing locked background video ${input.sourceVideoPath}`);
     }
@@ -465,10 +490,88 @@ function safeFrameAssetRelativePath(value: string): string {
 }
 
 function videoSources(html: string): string[] {
+  const sources = Array.from(html.matchAll(/<video[^>]+src=["']([^"']+)["']/gi), (match) => match[1] ?? "");
+  for (const match of html.matchAll(/<video\b[^>]*>([\s\S]*?)<\/video>/gi)) {
+    const inner = match[1] ?? "";
+    sources.push(...Array.from(inner.matchAll(/<source[^>]+src=["']([^"']+)["']/gi), (sourceMatch) => sourceMatch[1] ?? ""));
+  }
+  return sources.filter(Boolean);
+}
+
+function validateVideoChainFrameHtml(input: {
+  html: string;
+  sourceVideoPath: string;
+}): string[] {
+  const issues: string[] = [];
+  for (const ref of mediaSourceRefs(input.html)) {
+    if (isForbiddenMediaSourceUrl(ref.src)) {
+      issues.push(`${ref.tag} source URL is forbidden: ${ref.src}`);
+    }
+  }
+  for (const video of videoElements(input.html)) {
+    if (videoHasControls(video.attrs)) issues.push("video element must not use controls");
+    if (!videoHasMutedDefault(video.attrs, input.html)) issues.push("video element must be muted or defaultMuted");
+  }
+  for (const audioSrc of audioSources(input.html)) {
+    if (isSourceVideoAudioReference(audioSrc, input.sourceVideoPath)) {
+      issues.push(`audio element must not reference source video audio: ${audioSrc}`);
+    }
+  }
+  if (!hasOverlayMarker(input.html)) {
+    issues.push("frame must include an overlay, knowledge-card, callout, card, or keyword marker");
+  }
+  return issues;
+}
+
+function mediaSourceRefs(html: string): Array<{ tag: "img" | "video" | "audio" | "source"; src: string }> {
   return [
-    ...Array.from(html.matchAll(/<video[^>]+src=["']([^"']+)["']/gi), (match) => match[1] ?? ""),
-    ...Array.from(html.matchAll(/<source[^>]+src=["']([^"']+)["']/gi), (match) => match[1] ?? ""),
+    ...tagSourceRefs(html, "img"),
+    ...tagSourceRefs(html, "video"),
+    ...tagSourceRefs(html, "audio"),
+    ...tagSourceRefs(html, "source"),
+  ];
+}
+
+function tagSourceRefs(html: string, tag: "img" | "video" | "audio" | "source"): Array<{ tag: "img" | "video" | "audio" | "source"; src: string }> {
+  return Array.from(html.matchAll(new RegExp(`<${tag}\\b[^>]*\\bsrc=["']([^"']+)["']`, "gi")), (match) => ({
+    tag,
+    src: match[1] ?? "",
+  })).filter((ref) => ref.src.length > 0);
+}
+
+function videoElements(html: string): Array<{ attrs: string }> {
+  return Array.from(html.matchAll(/<video\b([^>]*)>/gi), (match) => ({ attrs: match[1] ?? "" }));
+}
+
+function audioSources(html: string): string[] {
+  return [
+    ...Array.from(html.matchAll(/<audio[^>]+src=["']([^"']+)["']/gi), (match) => match[1] ?? ""),
+    ...Array.from(html.matchAll(/<audio\b[^>]*>[\s\S]*?<source[^>]+src=["']([^"']+)["'][\s\S]*?<\/audio>/gi), (match) => match[1] ?? ""),
   ].filter(Boolean);
+}
+
+function isForbiddenMediaSourceUrl(src: string): boolean {
+  return /^(?:blob:|data:|file:|https?:\/\/|\/\/)/i.test(src);
+}
+
+function videoHasControls(attrs: string): boolean {
+  return /\bcontrols(?:\s|=|>|$)/i.test(attrs);
+}
+
+function videoHasMutedDefault(attrs: string, html: string): boolean {
+  return /\b(?:muted|defaultMuted)(?:\s|=|>|$)/i.test(attrs)
+    || /\.(?:muted|defaultMuted)\s*=\s*true\b/i.test(html);
+}
+
+function isSourceVideoAudioReference(src: string, sourceVideoPath: string): boolean {
+  const normalized = src.replace(/^\.\//, "");
+  return normalized === sourceVideoPath
+    || path.basename(normalized).startsWith("source_video")
+    || /\.mp4(?:[?#].*)?$/i.test(normalized);
+}
+
+function hasOverlayMarker(html: string): boolean {
+  return /(?:knowledge[-_\s]?card|callout|overlay|keyword|class=["'][^"']*(?:card|callout|overlay|keyword)|data-qivance-overlay)/i.test(html);
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

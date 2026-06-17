@@ -42,7 +42,7 @@ test("V5 chat_dialogue_mv handlers produce final media, QA report, manifest, and
   }
 });
 
-test("V5 manifest handler fails when locked input sha no longer matches ProjectInput", async () => {
+test("V5 manifest handler fails when stable input sha no longer matches the run snapshot", async () => {
   const storageRoot = await mkdtemp(path.join(tmpdir(), "qivance-chat-runner-v5-"));
   const prisma = await createQivancePrismaClient(storageRoot);
   try {
@@ -62,6 +62,29 @@ test("V5 manifest handler fails when locked input sha no longer matches ProjectI
     assert.match(failedTask.lastError ?? "", /artifact_inconsistent/);
     const run = await prisma.schedulerRun.findUniqueOrThrow({ where: { id: runId } });
     assert.equal(run.status, "failed");
+  } finally {
+    await closeQivancePrismaClient(prisma);
+  }
+});
+
+test("V5 manifest handler validates the run locked input snapshot instead of current active inputs", async () => {
+  const storageRoot = await mkdtemp(path.join(tmpdir(), "qivance-chat-runner-v5-"));
+  const prisma = await createQivancePrismaClient(storageRoot);
+  try {
+    const { runId } = await createRunReadyAfterTiming(prisma, storageRoot, "chat_snapshot_project");
+    await prisma.projectInput.updateMany({
+      where: { projectId: "chat_snapshot_project", status: "active" },
+      data: { sha256: "0".repeat(64) },
+    });
+
+    const handlers = createV5TaskHandlers(fakeMediaDeps());
+    for (let index = 0; index < 12; index += 1) {
+      await runV5SchedulerOnce(prisma, handlers);
+    }
+
+    const run = await prisma.schedulerRun.findUniqueOrThrow({ where: { id: runId }, include: { tasks: true } });
+    assert.equal(run.status, "passed");
+    assert.ok(run.tasks.every((task) => task.status === "passed"));
   } finally {
     await closeQivancePrismaClient(prisma);
   }

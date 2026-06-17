@@ -16,6 +16,7 @@ import {
   type RenderManifestV3ProjectMode,
 } from "./lib/export/render-manifest-v3.ts";
 import { sha256File } from "./lib/fs-utils.ts";
+import { buildV5SchedulerTaskSeeds } from "./lib/chain-registry/chain-registry.ts";
 import { createControlPlaneId, listControlPlaneProjects, readControlPlaneProject } from "./lib/db/control-plane.ts";
 import { closeQivancePrismaClient, createQivancePrismaClient } from "./lib/db/prisma-client.ts";
 import { createV5Project } from "./lib/project-core/project-create-v5.ts";
@@ -99,11 +100,7 @@ import { writeLyricsLineMap, validateLyricsLineMap, type LyricsLineMap } from ".
 import { buildSpeakerAttribution, validateSpeakerAttribution, writeSpeakerAttribution, type SpeakerAttribution } from "./lib/chat-dialogue/speaker-attribution.ts";
 import type { LyricWordTiming, SectionMapLike } from "./lib/chat-dialogue/line-timing.ts";
 import {
-  muxVideoChainFinal,
-  renderVideoChainVisual,
   validateVideoChainBackgroundFrames,
-  writeVideoChainManifest,
-  writeVideoChainQaReport,
 } from "./lib/video-chain/video-chain-runner.ts";
 
 const rootDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
@@ -111,6 +108,12 @@ const storageRoot = process.env.QIVANCE_PROJECTS_ROOT ?? path.join(rootDir, "pro
 const port = Number(process.env.PORT ?? 3000);
 const host = process.env.HOST?.trim() || "0.0.0.0";
 const execFileAsync = promisify(execFile);
+const VIDEO_CHAIN_FINAL_EXPORT_PATHS = [
+  "exports/video_chain/visual.mp4",
+  "exports/video_chain/final.mp4",
+  "data/chains/video_chain/qa_report.json",
+  "exports/video_chain/render_manifest.json",
+];
 
 await mkdir(storageRoot, { recursive: true });
 const prisma = await createQivancePrismaClient(storageRoot);
@@ -157,7 +160,7 @@ let shuttingDown = false;
 async function shutdown(): Promise<void> {
   if (shuttingDown) return;
   shuttingDown = true;
-  v5Runner?.stop();
+  await v5Runner?.stop({ drain: true }).catch(() => undefined);
   await closeQivancePrismaClient(prisma).catch(() => undefined);
   server.close(() => process.exit(0));
 }
@@ -343,7 +346,7 @@ async function route(request: IncomingMessage, response: ServerResponse): Promis
   const videoChainExportRenderMatch = url.pathname.match(/^\/api\/projects\/([^/]+)\/chains\/video-chain\/export\/render$/);
   if (request.method === "POST" && videoChainExportRenderMatch) {
     const project = await readRequiredVideoChainProject(videoChainExportRenderMatch[1]);
-    sendJson(response, await renderVideoChainExportForProject(project));
+    sendJson(response, await renderVideoChainExportForProject(project), 202);
     return;
   }
 
@@ -688,6 +691,7 @@ function v5ProjectWorkbenchStatus(status: string): V3ProjectListItem["status"] {
     || status === "input_uploaded"
     || status === "input_confirmed"
     || status === "queued"
+    || status === "ready"
     || status === "running"
     || status === "stopping"
     || status === "stopped"
@@ -788,8 +792,11 @@ async function stopV5RunResponse(rawProjectId: string, rawRunId: string): Promis
 }
 
 function v5InputRouteError(error: unknown): ApiRouteError {
+  const sourceVideoError = sourceVideoImportRouteError(error);
+  if (sourceVideoError) return sourceVideoError;
   const message = error instanceof Error ? error.message : String(error);
   if (/Missing V5 project/.test(message)) return new ApiRouteError(404, "project_not_found", message);
+  if (isMissingInputFileError(message, error)) return new ApiRouteError(409, "input_file_missing", message);
   if (/Confirm inputs requires active/.test(message)) return new ApiRouteError(409, "inputs_incomplete", message);
   if (/queued, running, or stopping/.test(message)) return new ApiRouteError(409, "active_run_exists", message);
   if (/Cannot replace inputs while/.test(message)) return new ApiRouteError(409, "input_replacement_forbidden", message);
@@ -1231,6 +1238,7 @@ async function reviseVideoChainProject(paths: SmallProjectPaths, body: Record<st
     }
     throw new ApiRouteError(409, "video_chain_preview_invalid", backgroundIssues.join("; "));
   }
+  await markVideoChainFinalExportsStaleAfterRevision(paths.smallProjectId);
   return {
     ...result,
     chain_id: "video_chain",
@@ -1239,70 +1247,127 @@ async function reviseVideoChainProject(paths: SmallProjectPaths, body: Record<st
 }
 
 async function renderVideoChainExportForProject(project: V5ProjectWithRelations): Promise<Record<string, unknown>> {
-  const outputPaths = [
-    "exports/video_chain/visual.mp4",
-    "exports/video_chain/final.mp4",
-    "data/chains/video_chain/qa_report.json",
-    "exports/video_chain/render_manifest.json",
-  ];
-  const exportRunId = `api_video_export_${new Date().toISOString().replaceAll(/[^0-9]+/g, "").slice(0, 14)}`;
-  await renderVideoChainVisual(project);
-  await muxVideoChainFinal(project);
-  await writeVideoChainQaReport(project);
-  await writeVideoChainManifest(project, exportRunId);
-  await prisma.artifact.updateMany({
-    where: {
-      projectId: project.id,
-      chainId: "video_chain",
-      status: "current",
-      path: { in: outputPaths },
-    },
-    data: { status: "stale" },
-  });
-  for (const relativePath of outputPaths) {
-    await prisma.artifact.create({
+  if (project.runs.some((run) => ["queued", "running", "stopping"].includes(run.status))) {
+    throw new ApiRouteError(409, "active_run_exists", "Cannot start video_chain export while a queued, running, or stopping run exists.");
+  }
+  const previewRun = await latestVideoChainPreviewRunForExport(project.id);
+  if (!previewRun?.lockedInputsJson) {
+    throw new ApiRouteError(409, "video_chain_preview_required", "A completed locked video_chain preview run is required before export.");
+  }
+  const runId = createControlPlaneId("run");
+  const taskSeeds = buildV5SchedulerTaskSeeds("video_chain", { phase: "export" });
+  await prisma.$transaction(async (tx) => {
+    await tx.schedulerRun.create({
       data: {
-        id: createControlPlaneId("artifact"),
+        id: runId,
         projectId: project.id,
-        chainId: "video_chain",
-        kind: artifactKindFromPath(relativePath),
-        path: relativePath,
-        sha256: await sha256File(path.join(project.projectRoot, relativePath)),
-        schemaVersion: relativePath.endsWith("render_manifest.json") ? "6" : relativePath.endsWith("qa_report.json") ? "1" : null,
-        status: "current",
-        createdByRunId: null,
+        status: "queued",
+        mode: "production_export",
+        priority: 60,
+        lockedInputsJson: previewRun.lockedInputsJson,
+        tasks: {
+          create: taskSeeds.map((seed) => ({
+            id: `${runId}_${seed.stage}`,
+            projectId: project.id,
+            chainId: "video_chain",
+            stage: seed.stage,
+            status: "queued",
+            dependenciesJson: JSON.stringify(seed.dependencies.map((dependency) => `${runId}_${dependency}`)),
+            resourceRequirementsJson: JSON.stringify(seed.resource_requirements),
+            inputArtifactsJson: JSON.stringify([]),
+            outputArtifactsJson: JSON.stringify(seed.output_artifacts),
+          })),
+        },
+        events: {
+          create: {
+            id: createControlPlaneId("event"),
+            eventType: "run_created",
+            message: "V6 video_chain export run created.",
+            detailsJson: JSON.stringify({
+              mode: "production_export",
+              task_phase: "export",
+              copied_locked_inputs_from_run_id: previewRun.id,
+            }),
+          },
+        },
       },
     });
-  }
-  await prisma.chain.updateMany({
-    where: { projectId: project.id, chainId: "video_chain" },
-    data: { status: "passed" },
-  });
-  await prisma.project.update({
-    where: { id: project.id },
-    data: { status: "passed" },
+    await tx.project.update({
+      where: { id: project.id },
+      data: { status: "queued" },
+    });
+    await tx.chain.updateMany({
+      where: { projectId: project.id, chainId: "video_chain" },
+      data: { status: "queued" },
+    });
   });
   return {
     project_id: project.id,
     chain_id: "video_chain",
-    visual_mp4: await v5ProjectFileRef(project, "exports/video_chain/visual.mp4"),
-    final_mp4: await v5ProjectFileRef(project, "exports/video_chain/final.mp4"),
-    qa_report: await v5ProjectFileRef(project, "data/chains/video_chain/qa_report.json"),
-    render_manifest: await v5ProjectFileRef(project, "exports/video_chain/render_manifest.json"),
-    export_policy: "explicit_final_render",
+    run_id: runId,
+    task_count: taskSeeds.length,
+    status: "queued",
+    mode: "production_export",
   };
 }
 
-async function v5ProjectFileRef(project: V5ProjectWithRelations, relativePath: string): Promise<{ exists: true; path: string; sha256: string }> {
-  return {
-    exists: true,
-    path: relativePath,
-    sha256: await sha256File(path.join(project.projectRoot, relativePath)),
-  };
+async function latestVideoChainPreviewRunForExport(projectId: string): Promise<{ id: string; lockedInputsJson: string | null } | null> {
+  return prisma.schedulerRun.findFirst({
+    where: {
+      projectId,
+      lockedInputsJson: { not: null },
+      tasks: {
+        some: {
+          chainId: "video_chain",
+          stage: "build_video_frames",
+          status: "passed",
+        },
+      },
+    },
+    orderBy: { createdAt: "desc" },
+    select: {
+      id: true,
+      lockedInputsJson: true,
+    },
+  });
 }
 
-function artifactKindFromPath(relativePath: string): string {
-  return path.basename(relativePath).replace(/\.[^.]+$/, "");
+async function markVideoChainFinalExportsStaleAfterRevision(projectId: string): Promise<void> {
+  const latestRun = await prisma.schedulerRun.findFirst({
+    where: {
+      projectId,
+      tasks: {
+        some: {
+          chainId: "video_chain",
+        },
+      },
+    },
+    orderBy: { createdAt: "desc" },
+    select: { id: true },
+  });
+  const stale = await prisma.artifact.updateMany({
+    where: {
+      projectId,
+      chainId: "video_chain",
+      status: "current",
+      path: { in: VIDEO_CHAIN_FINAL_EXPORT_PATHS },
+    },
+    data: { status: "stale" },
+  });
+  if (latestRun) {
+    await prisma.schedulerEvent.create({
+      data: {
+        id: createControlPlaneId("event"),
+        runId: latestRun.id,
+        eventType: "video_chain_export_artifacts_staled",
+        message: "V6 revision marked current final export artifacts stale.",
+        detailsJson: JSON.stringify({
+          stale_artifact_count: stale.count,
+          paths: VIDEO_CHAIN_FINAL_EXPORT_PATHS,
+        }),
+      },
+    });
+  }
 }
 
 async function writeChatDialogueChainStatus(paths: SmallProjectPaths, status: string, metrics: Record<string, string | number | boolean>): Promise<void> {
@@ -1679,9 +1744,7 @@ async function importSourceVideoForProject(paths: SmallProjectPaths, body: Recor
       },
     };
   } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    const status = /remote url/i.test(message) || /mp4 files only/i.test(message) ? 400 : 409;
-    throw new ApiRouteError(status, "source_video_import_failed", message);
+    throw sourceVideoImportRouteError(error) ?? new ApiRouteError(409, "source_video_import_failed", error instanceof Error ? error.message : String(error));
   }
 }
 
@@ -2653,4 +2716,25 @@ class ApiRouteError extends Error {
 function toRouteError(error: unknown): ApiRouteError {
   if (error instanceof ApiRouteError) return error;
   return new ApiRouteError(500, "internal_error", error instanceof Error ? error.message : String(error));
+}
+
+function sourceVideoImportRouteError(error: unknown): ApiRouteError | null {
+  const message = error instanceof Error ? error.message : String(error);
+  if (!isSourceVideoImportError(message)) return null;
+  return new ApiRouteError(sourceVideoImportStatus(message), "source_video_import_failed", message);
+}
+
+function isSourceVideoImportError(message: string): boolean {
+  return /Source video|source video|ffprobe|Invalid data found|moov atom|Error opening input|could not read/i.test(message);
+}
+
+function sourceVideoImportStatus(message: string): 400 | 409 {
+  if (/Remote URL|accepts MP4 files only|destination must be project-relative|destination must be an MP4 path/i.test(message)) {
+    return 400;
+  }
+  return 409;
+}
+
+function isMissingInputFileError(message: string, error: unknown): boolean {
+  return (error as NodeJS.ErrnoException).code === "ENOENT" || /ENOENT|No such file/i.test(message);
 }

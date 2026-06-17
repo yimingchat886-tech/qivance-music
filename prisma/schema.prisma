@@ -79,14 +79,15 @@ model Chain {
 }
 
 model SchedulerRun {
-  id            String   @id
-  projectId     String   @map("project_id")
-  status        String
-  mode          String
-  priority      Int
-  stopRequested Boolean  @default(false) @map("stop_requested")
-  createdAt     DateTime @default(now()) @map("created_at")
-  updatedAt     DateTime @updatedAt @map("updated_at")
+  id               String   @id
+  projectId        String   @map("project_id")
+  status           String
+  mode             String
+  priority         Int
+  stopRequested    Boolean  @default(false) @map("stop_requested")
+  lockedInputsJson String?  @map("locked_inputs_json")
+  createdAt        DateTime @default(now()) @map("created_at")
+  updatedAt        DateTime @updatedAt @map("updated_at")
 
   project   Project          @relation(fields: [projectId], references: [id], onDelete: Cascade)
   tasks     SchedulerTask[]

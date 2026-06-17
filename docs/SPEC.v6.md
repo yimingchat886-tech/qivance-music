@@ -246,11 +246,15 @@ Frame validation must reject:
 ```text
 - missing frame HTML
 - remote image/video URLs
+- blob:, data:, file:, http:, https:, and protocol-relative media source URLs
 - unregistered local video paths
 - forbidden path changes
 - missing window.__QIVANCE_FRAME metadata
 - duration drift over contract
 - any video_chain frame that does not reference source_video.mp4
+- source_video.mp4 or source video audio in <audio> elements
+- <video> elements with controls or without muted/defaultMuted behavior
+- frames without a practical overlay / knowledge-card / callout / keyword marker
 ```
 
 ---
@@ -344,6 +348,11 @@ production_gates.html_video_agent_required: true
 production_gates.fallback_frames_used: false
 production_gates.diagnostic_only: false
 production_gates.remote_resources_used: false
+qa.final_audio_source: active_music_take.mp3
+qa.audio_stream_count: 1
+qa.duration_drift_ms <= 150
+all EvidenceRef.path values non-empty
+all EvidenceRef.sha256 values 64 lowercase hex
 ```
 
 ---
