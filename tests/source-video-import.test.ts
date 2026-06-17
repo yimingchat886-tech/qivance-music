@@ -77,6 +77,27 @@ test("rejects remote URLs and unusable media probes", async () => {
   );
 });
 
+test("background video policy accepts silent MP4 probes", async () => {
+  const projectRoot = await mkdtemp(path.join("/tmp", "qivance-source-video-background-"));
+  const fixture = await writeSourceVideoFixture({ projectRoot });
+
+  const result = await importSourceVideoAsset({
+    projectRoot,
+    smallProjectId: "source_video_demo",
+    sourcePath: "source_video.mp4",
+    audioPolicy: "background_video_only",
+    probe: async () => ({
+      ...fixture.probe,
+      hasAudioStream: false,
+      audioStreamCount: 0,
+      audio: undefined,
+    }),
+  });
+
+  assert.equal(result.importFile.audio_policy, "background_video_only");
+  assert.equal(result.importFile.source_video.audio_streams, 0);
+});
+
 test("agent context can expose the locked local source video asset", async () => {
   const storageRoot = await mkdtemp(path.join("/tmp", "qivance-source-video-context-"));
   const paths = resolveSmallProjectPaths(storageRoot, "source_video_demo");

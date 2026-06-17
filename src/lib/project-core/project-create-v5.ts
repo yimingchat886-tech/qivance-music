@@ -2,7 +2,7 @@ import { mkdir } from "node:fs/promises";
 import path from "node:path";
 import type { QivancePrismaClient } from "../db/prisma-client.ts";
 import { createControlPlaneId } from "../db/control-plane.ts";
-import { requireEnabledV5Chain } from "../chain-registry/chain-registry.ts";
+import { requireEnabledV5Chain, type V5ChainId } from "../chain-registry/chain-registry.ts";
 
 export type V5CreateProjectInput = {
   storageRoot: string;
@@ -15,7 +15,7 @@ export type V5CreateProjectInput = {
 export type V5CreatedProject = {
   project_id: string;
   status: "input_required";
-  chain_id: "chat_dialogue_mv";
+  chain_id: V5ChainId;
   project_root: string;
 };
 
@@ -34,9 +34,11 @@ export async function createV5Project(
   await Promise.all([
     mkdir(path.join(projectRoot, "inputs", "lyrics"), { recursive: true }),
     mkdir(path.join(projectRoot, "inputs", "audio"), { recursive: true }),
+    mkdir(path.join(projectRoot, "inputs", "video"), { recursive: true }),
+    mkdir(path.join(projectRoot, "data", "source"), { recursive: true }),
     mkdir(path.join(projectRoot, "data", "timing"), { recursive: true }),
-    mkdir(path.join(projectRoot, "data", "chains", "chat_dialogue_mv"), { recursive: true }),
-    mkdir(path.join(projectRoot, "exports", "chat_dialogue_mv"), { recursive: true }),
+    mkdir(path.join(projectRoot, "data", "chains", chain.chain_id), { recursive: true }),
+    mkdir(path.join(projectRoot, "exports", chain.chain_id), { recursive: true }),
     mkdir(path.join(projectRoot, "video", "html-video"), { recursive: true }),
   ]);
 

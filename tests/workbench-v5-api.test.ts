@@ -130,10 +130,25 @@ test("V5 API creates DB-backed projects and exposes them through list/detail", a
     assert.equal(stoppedDetail.status.status, "stopped");
     assert.equal(stoppedDetail.status.runs[0].status, "stopped");
 
+    const videoCreateResponse = await fetch(`${baseUrl}/api/projects`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ title: "Video Chain", content_type: "video_chain" }),
+    });
+    assert.equal(videoCreateResponse.status, 201);
+    const videoCreated = await videoCreateResponse.json();
+    assert.equal(videoCreated.chain_id, "video_chain");
+    await stat(path.join(storageRoot, videoCreated.project_id, "inputs", "video"));
+    await stat(path.join(storageRoot, videoCreated.project_id, "exports", "video_chain"));
+
+    const videoPageResponse = await fetch(`${baseUrl}/projects/${videoCreated.project_id}/video-chain`);
+    assert.equal(videoPageResponse.status, 200);
+    assert.match(await videoPageResponse.text(), /v6_video_chain/);
+
     const invalidResponse = await fetch(`${baseUrl}/api/projects`, {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ title: "Invalid", content_type: "video_chain" }),
+      body: JSON.stringify({ title: "Invalid", content_type: "unknown_chain" }),
     });
     assert.equal(invalidResponse.status, 400);
     assert.equal((await invalidResponse.json()).error.code, "unsupported_content_type");

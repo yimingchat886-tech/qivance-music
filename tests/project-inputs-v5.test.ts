@@ -22,7 +22,7 @@ test("uploads partial V5 inputs and confirms only after lyrics and audio exist",
       lyricsText: "line one\nline two\n",
     });
     assert.equal(lyricsOnly.status, "input_required");
-    await assert.rejects(confirmV5ProjectInputs(prisma, project.project_id), /requires active lyrics and active audio/);
+    await assert.rejects(confirmV5ProjectInputs(prisma, project.project_id), /requires active lyrics and audio/);
 
     const audioUpload = await uploadV5ProjectInputs(prisma, project.project_id, {
       audioFile: {
@@ -95,6 +95,47 @@ test("requires explicit replace and rejects replacement during queued work", asy
       /Cannot replace inputs while project status is queued/,
     );
     await stat(path.join(storageRoot, project.project_id, activeLyrics[0]!.path));
+  } finally {
+    await closeQivancePrismaClient(prisma);
+  }
+});
+
+test("video_chain requires an active MP4 input before confirmation", async () => {
+  const storageRoot = await mkdtemp(path.join(tmpdir(), "qivance-project-inputs-v5-"));
+  const prisma = await createQivancePrismaClient(storageRoot);
+  try {
+    const project = await createV5Project(prisma, {
+      storageRoot,
+      projectId: "v6_video_inputs_project",
+      title: "V6 Video Inputs Project",
+      contentType: "video_chain",
+    });
+
+    const audioAndLyrics = await uploadV5ProjectInputs(prisma, project.project_id, {
+      lyricsText: "line one\nline two\n",
+      audioFile: {
+        filename: "take.mp3",
+        mimeType: "audio/mpeg",
+        data: Buffer.from([1, 2, 3, 4]),
+      },
+    });
+    assert.equal(audioAndLyrics.status, "input_required");
+    await assert.rejects(confirmV5ProjectInputs(prisma, project.project_id), /requires active lyrics, audio, and video/);
+
+    const videoUpload = await uploadV5ProjectInputs(prisma, project.project_id, {
+      videoFile: {
+        filename: "background.mp4",
+        mimeType: "video/mp4",
+        data: Buffer.from([5, 6, 7, 8]),
+      },
+    });
+    assert.equal(videoUpload.status, "input_uploaded");
+
+    const storedVideo = await prisma.projectInput.findFirstOrThrow({
+      where: { projectId: project.project_id, kind: "video", status: "active" },
+    });
+    assert.equal(storedVideo.stablePath, "source_video.mp4");
+    await stat(path.join(storageRoot, project.project_id, storedVideo.path));
   } finally {
     await closeQivancePrismaClient(prisma);
   }

@@ -55,11 +55,41 @@ test("rejects unsupported V5 project content types", async () => {
       createV5Project(prisma, {
         storageRoot,
         title: "Rejected Project",
-        contentType: "video_chain",
+        contentType: "unknown_chain",
       }),
       /Unsupported V5 chain/,
     );
     assert.equal(await prisma.project.count(), 0);
+  } finally {
+    await closeQivancePrismaClient(prisma);
+  }
+});
+
+test("creates a V6 video_chain project with video input and chain directories", async () => {
+  const storageRoot = await mkdtemp(path.join(tmpdir(), "qivance-project-create-v5-"));
+  const prisma = await createQivancePrismaClient(storageRoot);
+  try {
+    const created = await createV5Project(prisma, {
+      storageRoot,
+      projectId: "v6_video_project",
+      title: "V6 Video Project",
+      contentType: "video_chain",
+    });
+
+    assert.equal(created.chain_id, "video_chain");
+    await stat(path.join(storageRoot, created.project_id, "inputs", "lyrics"));
+    await stat(path.join(storageRoot, created.project_id, "inputs", "audio"));
+    await stat(path.join(storageRoot, created.project_id, "inputs", "video"));
+    await stat(path.join(storageRoot, created.project_id, "data", "source"));
+    await stat(path.join(storageRoot, created.project_id, "data", "chains", "video_chain"));
+    await stat(path.join(storageRoot, created.project_id, "exports", "video_chain"));
+
+    const project = await prisma.project.findUniqueOrThrow({
+      where: { id: created.project_id },
+      include: { chains: true },
+    });
+    assert.equal(project.contentType, "video_chain");
+    assert.equal(project.chains[0]?.chainId, "video_chain");
   } finally {
     await closeQivancePrismaClient(prisma);
   }
