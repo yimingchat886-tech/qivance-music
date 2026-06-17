@@ -1,0 +1,5 @@
+{"file": ".trellis/spec/backend/index.md", "reason": "Backend spec index for affected V5/V6 control-plane, scheduler, export, and Workbench layers."}
+{"file": ".trellis/spec/backend/v5-control-plane-runner-contracts.md", "reason": "Primary contract for V5 project inputs, DB-backed runner, V6 video_chain routes, Workbench, and required tests."}
+{"file": ".trellis/spec/backend/v4-chat-scheduler-contracts.md", "reason": "Scheduler/export evidence and manifest QA conventions that V5/V6 must preserve."}
+{"file": ".trellis/tasks/06-17-v5-v6-unified-stabilization/prd.md", "reason": "Task requirements and user decisions for the stabilization work."}
+{"file": ".trellis/tasks/06-17-v5-v6-unified-stabilization/PLAN.md", "reason": "Patch A-D sequencing, worker ownership, and verification gates."}
