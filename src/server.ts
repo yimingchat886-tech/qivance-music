@@ -16,7 +16,7 @@ import {
   type RenderManifestV3ProjectMode,
 } from "./lib/export/render-manifest-v3.ts";
 import { sha256File } from "./lib/fs-utils.ts";
-import { listControlPlaneProjects, readControlPlaneProject } from "./lib/db/control-plane.ts";
+import { createControlPlaneId, listControlPlaneProjects, readControlPlaneProject } from "./lib/db/control-plane.ts";
 import { closeQivancePrismaClient, createQivancePrismaClient } from "./lib/db/prisma-client.ts";
 import { createV5Project } from "./lib/project-core/project-create-v5.ts";
 import { confirmV5ProjectInputs, uploadV5ProjectInputs } from "./lib/project-core/project-inputs-v5.ts";
@@ -75,9 +75,11 @@ import type {
 } from "./lib/workbench/api-types.ts";
 import { readWorkbenchProjectStatus, type WorkbenchProjectStatus } from "./lib/workbench/project-status.ts";
 import {
+  renderHtmlVideoPreviewPlayer,
   renderWorkbenchProjectDetailPage,
   renderWorkbenchProjectsPage,
   renderWorkbenchV5ProjectDetailPage,
+  renderWorkbenchV6VideoChainPage,
   type V5WorkbenchProjectDetail,
   type WorkbenchChainSummary,
 } from "./lib/workbench/workbench-html.ts";
@@ -96,6 +98,13 @@ import { buildConversationPlan, validateConversationPlan, writeConversationPlan,
 import { writeLyricsLineMap, validateLyricsLineMap, type LyricsLineMap } from "./lib/chat-dialogue/lyrics-line-map.ts";
 import { buildSpeakerAttribution, validateSpeakerAttribution, writeSpeakerAttribution, type SpeakerAttribution } from "./lib/chat-dialogue/speaker-attribution.ts";
 import type { LyricWordTiming, SectionMapLike } from "./lib/chat-dialogue/line-timing.ts";
+import {
+  muxVideoChainFinal,
+  renderVideoChainVisual,
+  validateVideoChainBackgroundFrames,
+  writeVideoChainManifest,
+  writeVideoChainQaReport,
+} from "./lib/video-chain/video-chain-runner.ts";
 
 const rootDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const storageRoot = process.env.QIVANCE_PROJECTS_ROOT ?? path.join(rootDir, "projects");
@@ -162,6 +171,21 @@ async function route(request: IncomingMessage, response: ServerResponse): Promis
 
   if (request.method === "GET" && url.pathname === "/projects") {
     sendHtml(response, renderWorkbenchProjectsPage({ projects: (await listApiProjects()).projects }));
+    return;
+  }
+
+  const videoChainPageMatch = url.pathname.match(/^\/projects\/([^/]+)\/video-chain$/);
+  if (request.method === "GET" && videoChainPageMatch) {
+    const project = await readRequiredVideoChainProject(videoChainPageMatch[1]);
+    sendHtml(response, renderWorkbenchV6VideoChainPage({ detail: v5ProjectDetailResponse(project).status }));
+    return;
+  }
+
+  const videoChainPreviewPageMatch = url.pathname.match(/^\/projects\/([^/]+)\/video-chain\/preview$/);
+  if (request.method === "GET" && videoChainPreviewPageMatch) {
+    const project = await readRequiredVideoChainProject(videoChainPreviewPageMatch[1]);
+    const paths = await resolveExistingProjectPaths(project.id);
+    sendHtml(response, renderHtmlVideoPreviewPlayer({ model: await loadHtmlVideoPreviewModel(paths) }));
     return;
   }
 
@@ -293,6 +317,40 @@ async function route(request: IncomingMessage, response: ServerResponse): Promis
   if (request.method === "GET" && chatFinalMp4Match) {
     const paths = await resolveExistingProjectPaths(chatFinalMp4Match[1]);
     await sendApiFile(response, path.join(paths.projectRoot, "exports/chat_dialogue_mv/final.mp4"), "video/mp4");
+    return;
+  }
+
+  const videoChainPreviewMatch = url.pathname.match(/^\/api\/projects\/([^/]+)\/chains\/video-chain\/preview$/);
+  if (request.method === "GET" && videoChainPreviewMatch) {
+    const project = await readRequiredVideoChainProject(videoChainPreviewMatch[1]);
+    const paths = await resolveExistingProjectPaths(project.id);
+    sendJson(response, {
+      chain_id: "video_chain",
+      preview: await loadHtmlVideoPreviewModel(paths),
+    });
+    return;
+  }
+
+  const videoChainRevisionMatch = url.pathname.match(/^\/api\/projects\/([^/]+)\/chains\/video-chain\/revise$/);
+  if (request.method === "POST" && videoChainRevisionMatch) {
+    const project = await readRequiredVideoChainProject(videoChainRevisionMatch[1]);
+    const paths = await resolveExistingProjectPaths(project.id);
+    const body = await readJsonRequestBody(request);
+    sendJson(response, await reviseVideoChainProject(paths, body));
+    return;
+  }
+
+  const videoChainExportRenderMatch = url.pathname.match(/^\/api\/projects\/([^/]+)\/chains\/video-chain\/export\/render$/);
+  if (request.method === "POST" && videoChainExportRenderMatch) {
+    const project = await readRequiredVideoChainProject(videoChainExportRenderMatch[1]);
+    sendJson(response, await renderVideoChainExportForProject(project));
+    return;
+  }
+
+  const videoChainFinalMp4Match = url.pathname.match(/^\/api\/projects\/([^/]+)\/chains\/video-chain\/export\/final\.mp4$/);
+  if (request.method === "GET" && videoChainFinalMp4Match) {
+    const project = await readRequiredVideoChainProject(videoChainFinalMp4Match[1]);
+    await sendApiFile(response, path.join(project.projectRoot, "exports/video_chain/final.mp4"), "video/mp4");
     return;
   }
 
@@ -647,6 +705,15 @@ async function readV5ProjectFromRoute(rawProjectId: string): Promise<V5ProjectWi
   return readControlPlaneProject(prisma, projectId);
 }
 
+async function readRequiredVideoChainProject(rawProjectId: string): Promise<V5ProjectWithRelations> {
+  const project = await readV5ProjectFromRoute(rawProjectId);
+  if (!project) throw new ApiRouteError(404, "project_not_found", "Project not found.");
+  if (project.contentType !== "video_chain") {
+    throw new ApiRouteError(409, "not_video_chain_project", "This route only supports video_chain projects.");
+  }
+  return project;
+}
+
 async function createV5ProjectResponse(body: Record<string, unknown>): Promise<Record<string, unknown>> {
   const title = stringBodyValue(body.title);
   const contentType = stringBodyValue(body.content_type) ?? stringBodyValue(body.contentType);
@@ -685,6 +752,7 @@ async function uploadV5ProjectInputsResponse(rawProjectId: string, request: Inco
       lyricsText: form.fields.get("lyrics_text"),
       lyricsFile: form.files.get("lyrics_file"),
       audioFile: form.files.get("audio_file"),
+      videoFile: form.files.get("video_file") ?? form.files.get("mp4_file"),
       replace: form.fields.get("replace") === "true",
     });
   } catch (error) {
@@ -722,11 +790,11 @@ async function stopV5RunResponse(rawProjectId: string, rawRunId: string): Promis
 function v5InputRouteError(error: unknown): ApiRouteError {
   const message = error instanceof Error ? error.message : String(error);
   if (/Missing V5 project/.test(message)) return new ApiRouteError(404, "project_not_found", message);
-  if (/requires active lyrics and active audio/.test(message)) return new ApiRouteError(409, "inputs_incomplete", message);
+  if (/Confirm inputs requires active/.test(message)) return new ApiRouteError(409, "inputs_incomplete", message);
   if (/queued, running, or stopping/.test(message)) return new ApiRouteError(409, "active_run_exists", message);
   if (/Cannot replace inputs while/.test(message)) return new ApiRouteError(409, "input_replacement_forbidden", message);
   if (/replace=true/.test(message)) return new ApiRouteError(409, "input_replacement_required", message);
-  if (/must be \.md or \.txt|must be \.mp3 or \.wav/.test(message)) return new ApiRouteError(400, "unsupported_input_type", message);
+  if (/must be \.md or \.txt|must be \.mp3 or \.wav|must be \.mp4/.test(message)) return new ApiRouteError(400, "unsupported_input_type", message);
   if (/Upload requires| is empty/.test(message)) return new ApiRouteError(400, "invalid_input_upload", message);
   return new ApiRouteError(500, "internal_error", message);
 }
@@ -1131,6 +1199,110 @@ async function renderChatDialogueExportForProject(paths: SmallProjectPaths): Pro
     },
     qa_report: await chatFileRef(paths, qaRelativePath),
   };
+}
+
+async function reviseVideoChainProject(paths: SmallProjectPaths, body: Record<string, unknown>): Promise<Record<string, unknown>> {
+  const result = await reviseHtmlVideoProject(paths, body);
+  const sourceVideoImport = await readRequiredProjectJson<SourceVideoImportFile>(
+    paths,
+    "data/source/source_video_import.json",
+    "source_video_missing",
+    "source_video_import.json is required before video_chain revision.",
+  );
+  const contracts = await readRequiredJsonFile<QivanceFrameContracts>(
+    paths.frameContractsPath,
+    "frame_contracts_missing",
+    "qivance-frame-contracts.json is required before video_chain revision.",
+  );
+  const backgroundIssues = await validateVideoChainBackgroundFrames({
+    paths,
+    contracts,
+    sourceVideoPath: sourceVideoImport.source_video.path,
+  });
+  if (backgroundIssues.length > 0) {
+    const revision = isRecord(result.revision_request) && isRecord(result.revision_request.data)
+      ? result.revision_request.data
+      : null;
+    if (revision) {
+      await writeJson(path.join(paths.projectRoot, "revision_request.json"), {
+        ...revision,
+        status: "failed",
+      });
+    }
+    throw new ApiRouteError(409, "video_chain_preview_invalid", backgroundIssues.join("; "));
+  }
+  return {
+    ...result,
+    chain_id: "video_chain",
+    export_policy: "preview_refreshed_only",
+  };
+}
+
+async function renderVideoChainExportForProject(project: V5ProjectWithRelations): Promise<Record<string, unknown>> {
+  const outputPaths = [
+    "exports/video_chain/visual.mp4",
+    "exports/video_chain/final.mp4",
+    "data/chains/video_chain/qa_report.json",
+    "exports/video_chain/render_manifest.json",
+  ];
+  const exportRunId = `api_video_export_${new Date().toISOString().replaceAll(/[^0-9]+/g, "").slice(0, 14)}`;
+  await renderVideoChainVisual(project);
+  await muxVideoChainFinal(project);
+  await writeVideoChainQaReport(project);
+  await writeVideoChainManifest(project, exportRunId);
+  await prisma.artifact.updateMany({
+    where: {
+      projectId: project.id,
+      chainId: "video_chain",
+      status: "current",
+      path: { in: outputPaths },
+    },
+    data: { status: "stale" },
+  });
+  for (const relativePath of outputPaths) {
+    await prisma.artifact.create({
+      data: {
+        id: createControlPlaneId("artifact"),
+        projectId: project.id,
+        chainId: "video_chain",
+        kind: artifactKindFromPath(relativePath),
+        path: relativePath,
+        sha256: await sha256File(path.join(project.projectRoot, relativePath)),
+        schemaVersion: relativePath.endsWith("render_manifest.json") ? "6" : relativePath.endsWith("qa_report.json") ? "1" : null,
+        status: "current",
+        createdByRunId: null,
+      },
+    });
+  }
+  await prisma.chain.updateMany({
+    where: { projectId: project.id, chainId: "video_chain" },
+    data: { status: "passed" },
+  });
+  await prisma.project.update({
+    where: { id: project.id },
+    data: { status: "passed" },
+  });
+  return {
+    project_id: project.id,
+    chain_id: "video_chain",
+    visual_mp4: await v5ProjectFileRef(project, "exports/video_chain/visual.mp4"),
+    final_mp4: await v5ProjectFileRef(project, "exports/video_chain/final.mp4"),
+    qa_report: await v5ProjectFileRef(project, "data/chains/video_chain/qa_report.json"),
+    render_manifest: await v5ProjectFileRef(project, "exports/video_chain/render_manifest.json"),
+    export_policy: "explicit_final_render",
+  };
+}
+
+async function v5ProjectFileRef(project: V5ProjectWithRelations, relativePath: string): Promise<{ exists: true; path: string; sha256: string }> {
+  return {
+    exists: true,
+    path: relativePath,
+    sha256: await sha256File(path.join(project.projectRoot, relativePath)),
+  };
+}
+
+function artifactKindFromPath(relativePath: string): string {
+  return path.basename(relativePath).replace(/\.[^.]+$/, "");
 }
 
 async function writeChatDialogueChainStatus(paths: SmallProjectPaths, status: string, metrics: Record<string, string | number | boolean>): Promise<void> {
@@ -1886,7 +2058,7 @@ async function buildRenderManifestV3ForProject(
       imageReviewDecisions: await evidenceRef(paths, "data/storyboard/image_review_decisions.json"),
     } : {}),
     agentRuns: await agentRunEvidenceRefs(paths),
-    ...(sourceVideoImport ? {
+    ...(sourceVideoImport?.audio_policy === "preserve_source_audio" ? {
       sourceVideo: {
         enabled: true as const,
         ...await evidenceRef(paths, "data/source/source_video_import.json"),
@@ -2194,7 +2366,9 @@ function buildRevisionPrompt(revision: ReturnType<typeof createRevisionRequest>)
     "Edit only frame HTML files under frames/ and supporting codex/ or qa/ files.",
     "Do not use network assets. Do not change project.json, content-graph.json, or qivance-frame-contracts.json.",
     "If codex/agent_context.json has sourceVideo.enabled=true, keep the exact sourceVideo.path as a local <video> or <source> src in at least one frame.",
+    "If sourceVideo.audioPolicy is background_video_only, keep sourceVideo.path as a muted background video layer and do not use source video audio.",
     "Do not rewrite sourceVideo.path into a parent-relative path; use the exact path from agent_context.",
+    "Do not render, mux, create, or modify final.mp4; this revision only refreshes html-video preview frames.",
     "Prefer the smallest valid edit that satisfies the request; do not redesign unrelated scenes.",
     "Every edited frame must keep a machine-parseable metadata assignment.",
     "Use exactly this shape with double-quoted JSON keys and string values so JSON.parse succeeds:",

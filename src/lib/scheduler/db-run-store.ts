@@ -132,10 +132,14 @@ async function writeRunProjectStatus(
 ): Promise<void> {
   await prisma.schedulerRun.update({ where: { id: run.id }, data: { status } });
   await prisma.project.update({ where: { id: run.projectId }, data: { status } });
+  const chainIds = [...new Set((await prisma.schedulerTask.findMany({
+    where: { runId: run.id },
+    select: { chainId: true },
+  })).map((task) => task.chainId))];
   await prisma.chain.updateMany({
     where: {
       projectId: run.projectId,
-      chainId: "chat_dialogue_mv",
+      chainId: { in: chainIds },
     },
     data: { status },
   });

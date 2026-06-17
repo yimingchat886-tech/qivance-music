@@ -19,6 +19,15 @@ import { buildRenderManifestV4, validateRenderManifestV4, type RenderManifestV4E
 import { sha256File, writeJson } from "../fs-utils.ts";
 import { resolveMediaE2EPythonEnv } from "../media-e2e/python-env.ts";
 import { buildSectionMapFromEvidence } from "../section-map/section-map-builder.ts";
+import {
+  buildVideoChainFrames,
+  muxVideoChainFinal,
+  prepareVideoChainContext,
+  renderVideoChainVisual,
+  writeVideoChainManifest,
+  writeVideoChainQaReport,
+  type VideoChainDeps,
+} from "../video-chain/video-chain-runner.ts";
 import { runWhisperXAlignment as runWhisperXAlignmentDefault } from "../word-alignment/whisperx-runner.ts";
 import type { QivancePrismaClient } from "../db/prisma-client.ts";
 import type { V5SchedulerTaskHandlerInput, V5SchedulerTaskHandlers } from "./server-runner-loop.ts";
@@ -26,7 +35,7 @@ import type { V5SchedulerTaskHandlerInput, V5SchedulerTaskHandlers } from "./ser
 const execFileAsync = promisify(execFileCallback);
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../..");
 
-export type V5TaskHandlerDeps = {
+export type V5TaskHandlerDeps = VideoChainDeps & {
   runAudioAnalysis?: (input: {
     pythonExecutable: string;
     scriptPath: string;
@@ -50,6 +59,12 @@ export function createV5TaskHandlers(deps: V5TaskHandlerDeps = {}): Partial<V5Sc
     mux_final: (input) => muxFinalTask(input, deps),
     qa_report: (input) => writeQaReportTask(input, deps),
     write_manifest: (input) => writeManifestTask(input, deps),
+    prepare_video_context: (input) => prepareVideoContextTask(input, deps),
+    build_video_frames: (input) => buildVideoFramesTask(input, deps),
+    render_video_visual: (input) => renderVideoVisualTask(input, deps),
+    mux_video_final: (input) => muxVideoFinalTask(input, deps),
+    video_qa_report: (input) => writeVideoQaReportTask(input, deps),
+    write_video_manifest: (input) => writeVideoManifestTask(input, deps),
   };
 }
 
@@ -258,6 +273,45 @@ async function writeManifestTask({ prisma, run, task }: V5SchedulerTaskHandlerIn
   await writeJson(path.join(project.projectRoot, "exports/chat_dialogue_mv/render_manifest.json"), manifest);
   await prisma.chain.updateMany({
     where: { projectId: project.id, chainId: "chat_dialogue_mv" },
+    data: { status: "passed" },
+  });
+  await prisma.project.update({
+    where: { id: project.id },
+    data: { status: "passed" },
+  });
+}
+
+async function prepareVideoContextTask({ prisma, task }: V5SchedulerTaskHandlerInput, deps: V5TaskHandlerDeps): Promise<void> {
+  const project = await prisma.project.findUniqueOrThrow({ where: { id: task.projectId } });
+  await prepareVideoChainContext(project, deps);
+}
+
+async function buildVideoFramesTask({ prisma, task }: V5SchedulerTaskHandlerInput, deps: V5TaskHandlerDeps): Promise<void> {
+  const project = await prisma.project.findUniqueOrThrow({ where: { id: task.projectId } });
+  await buildVideoChainFrames(project, deps);
+}
+
+async function renderVideoVisualTask({ prisma, task }: V5SchedulerTaskHandlerInput, deps: V5TaskHandlerDeps): Promise<void> {
+  const project = await prisma.project.findUniqueOrThrow({ where: { id: task.projectId } });
+  await renderVideoChainVisual(project, deps);
+}
+
+async function muxVideoFinalTask({ prisma, task }: V5SchedulerTaskHandlerInput, deps: V5TaskHandlerDeps): Promise<void> {
+  const project = await prisma.project.findUniqueOrThrow({ where: { id: task.projectId } });
+  await muxVideoChainFinal(project, deps);
+}
+
+async function writeVideoQaReportTask({ prisma, task }: V5SchedulerTaskHandlerInput, deps: V5TaskHandlerDeps): Promise<void> {
+  const project = await prisma.project.findUniqueOrThrow({ where: { id: task.projectId } });
+  await writeVideoChainQaReport(project, deps);
+}
+
+async function writeVideoManifestTask({ prisma, run, task }: V5SchedulerTaskHandlerInput, deps: V5TaskHandlerDeps): Promise<void> {
+  const project = await prisma.project.findUniqueOrThrow({ where: { id: task.projectId } });
+  await assertLockedInputSha(prisma, project.id);
+  await writeVideoChainManifest(project, run.id, deps);
+  await prisma.chain.updateMany({
+    where: { projectId: project.id, chainId: "video_chain" },
     data: { status: "passed" },
   });
   await prisma.project.update({

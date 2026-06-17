@@ -17,7 +17,7 @@ export type SourceVideoImportFile = {
     audio_codec: string;
     ffprobe: MediaProbe;
   };
-  audio_policy: "preserve_source_audio";
+  audio_policy: "preserve_source_audio" | "background_video_only";
   status: "locked";
   provenance: {
     source: "local_file";
@@ -33,6 +33,7 @@ export async function importSourceVideoAsset(input: {
   sourcePath?: string;
   copyToProject?: boolean;
   destinationPath?: string;
+  audioPolicy?: SourceVideoImportFile["audio_policy"];
   importedAt?: string;
   probe?: SourceVideoImportProbe;
 }): Promise<{ importFile: SourceVideoImportFile; path: string }> {
@@ -45,7 +46,8 @@ export async function importSourceVideoAsset(input: {
     destinationPath: input.destinationPath ?? "source_video.mp4",
   });
   const probe = await (input.probe ?? ffprobe)(resolved.absolutePath);
-  assertUsableSourceVideoProbe(probe);
+  const audioPolicy = input.audioPolicy ?? "preserve_source_audio";
+  assertUsableSourceVideoProbe(probe, audioPolicy);
   const importFile: SourceVideoImportFile = {
     schema_version: 1,
     small_project_id: input.smallProjectId,
@@ -60,7 +62,7 @@ export async function importSourceVideoAsset(input: {
       audio_codec: probe.audio?.codecName ?? "",
       ffprobe: probe,
     },
-    audio_policy: "preserve_source_audio",
+    audio_policy: audioPolicy,
     status: "locked",
     provenance: {
       source: "local_file",
@@ -82,11 +84,11 @@ export function sourceVideoAgentContext(importFile: SourceVideoImportFile) {
   };
 }
 
-function assertUsableSourceVideoProbe(probe: MediaProbe): void {
+function assertUsableSourceVideoProbe(probe: MediaProbe, audioPolicy: SourceVideoImportFile["audio_policy"]): void {
   if (!probe.hasVideoStream || !probe.video || probe.video.width <= 0 || probe.video.height <= 0 || !probe.video.codecName) {
     throw new Error("Source video import requires a readable MP4 with one video stream and dimensions.");
   }
-  if (!probe.hasAudioStream || probe.audioStreamCount <= 0 || !probe.audio?.codecName) {
+  if (audioPolicy === "preserve_source_audio" && (!probe.hasAudioStream || probe.audioStreamCount <= 0 || !probe.audio?.codecName)) {
     throw new Error("Source video import requires an audio stream so source audio can be preserved.");
   }
   if (!Number.isFinite(probe.durationSec) || probe.durationSec <= 0) {

@@ -2,9 +2,10 @@ import { createHash } from "node:crypto";
 import { copyFile, mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 import type { MultipartFile } from "../multipart-form.ts";
-import { buildV5SchedulerTaskSeeds } from "../chain-registry/chain-registry.ts";
+import { buildV5SchedulerTaskSeeds, requireEnabledV5Chain, type V5ChainInputKind } from "../chain-registry/chain-registry.ts";
 import { createControlPlaneId, markCurrentArtifactsStale } from "../db/control-plane.ts";
 import type { QivancePrismaClient } from "../db/prisma-client.ts";
+import { importSourceVideoAsset } from "../video-html/source-video-import.ts";
 
 const REPLACE_ALLOWED_PROJECT_STATUSES = new Set(["draft", "input_required", "input_uploaded", "stopped", "failed", "passed"]);
 const ACTIVE_RUN_STATUSES = new Set(["queued", "running", "stopping"]);
@@ -13,6 +14,7 @@ export type V5InputUpload = {
   lyricsText?: string;
   lyricsFile?: MultipartFile;
   audioFile?: MultipartFile;
+  videoFile?: MultipartFile;
   replace?: boolean;
 };
 
@@ -29,7 +31,7 @@ export async function uploadV5ProjectInputs(
 
   const requestedInputs = normalizeRequestedInputs(upload);
   if (requestedInputs.length === 0) {
-    throw new Error("Upload requires lyrics_text, lyrics_file, or audio_file.");
+    throw new Error("Upload requires lyrics_text, lyrics_file, audio_file, or video_file.");
   }
 
   const activeByKind = new Map(project.inputs.filter((input) => input.status === "active").map((input) => [input.kind, input]));
@@ -66,7 +68,7 @@ export async function uploadV5ProjectInputs(
         status: "active",
         originalName: input.originalName,
         path: input.relativePath,
-        stablePath: input.kind === "lyrics" ? "lyrics.md" : "active_music_take.mp3",
+        stablePath: stablePathForInputKind(input.kind),
         sha256: sha256Buffer(input.data),
         mime: input.mime,
       },
@@ -79,9 +81,9 @@ export async function uploadV5ProjectInputs(
       status: "active",
     },
   });
-  const hasLyrics = activeInputs.some((input) => input.kind === "lyrics");
-  const hasAudio = activeInputs.some((input) => input.kind === "audio");
-  const nextStatus = hasLyrics && hasAudio ? "input_uploaded" : "input_required";
+  const chain = requireEnabledV5Chain(project.contentType);
+  const activeKinds = new Set(activeInputs.map((input) => input.kind));
+  const nextStatus = chain.input_requirements.every((kind) => activeKinds.has(kind)) ? "input_uploaded" : "input_required";
   await prisma.project.update({
     where: { id: projectId },
     data: { status: nextStatus },
@@ -114,14 +116,28 @@ export async function confirmV5ProjectInputs(prisma: QivancePrismaClient, projec
 
   const activeLyrics = project.inputs.find((input) => input.kind === "lyrics" && input.status === "active");
   const activeAudio = project.inputs.find((input) => input.kind === "audio" && input.status === "active");
-  if (!activeLyrics || !activeAudio) {
-    throw new Error("Confirm inputs requires active lyrics and active audio.");
+  const activeVideo = project.inputs.find((input) => input.kind === "video" && input.status === "active");
+  const chain = project.chains.find((item) => item.chainId === project.contentType);
+  if (!chain) throw new Error(`Missing ${project.contentType} chain.`);
+  const registryEntry = requireEnabledV5Chain(chain.chainId);
+  const activeByKind = new Map(project.inputs.filter((input) => input.status === "active").map((input) => [input.kind, input]));
+  const missingInputs = registryEntry.input_requirements.filter((kind) => !activeByKind.has(kind));
+  if (missingInputs.length > 0) {
+    throw new Error(`Confirm inputs requires active ${humanInputList(registryEntry.input_requirements)}.`);
   }
-  const chain = project.chains.find((item) => item.chainId === "chat_dialogue_mv");
-  if (!chain) throw new Error("Missing chat_dialogue_mv chain.");
 
-  await copyFile(path.join(project.projectRoot, activeLyrics.path), path.join(project.projectRoot, activeLyrics.stablePath));
-  await copyFile(path.join(project.projectRoot, activeAudio.path), path.join(project.projectRoot, activeAudio.stablePath));
+  if (activeLyrics) await copyFile(path.join(project.projectRoot, activeLyrics.path), path.join(project.projectRoot, activeLyrics.stablePath));
+  if (activeAudio) await copyFile(path.join(project.projectRoot, activeAudio.path), path.join(project.projectRoot, activeAudio.stablePath));
+  if (activeVideo) {
+    await copyFile(path.join(project.projectRoot, activeVideo.path), path.join(project.projectRoot, activeVideo.stablePath));
+    await importSourceVideoAsset({
+      projectRoot: project.projectRoot,
+      smallProjectId: project.id,
+      sourcePath: activeVideo.stablePath,
+      copyToProject: false,
+      audioPolicy: "background_video_only",
+    });
+  }
 
   const runId = createControlPlaneId("run");
   const taskSeeds = buildV5SchedulerTaskSeeds(chain.chainId);
@@ -152,8 +168,9 @@ export async function confirmV5ProjectInputs(prisma: QivancePrismaClient, projec
           message: "V5 scheduler run created from confirmed inputs.",
           detailsJson: JSON.stringify({
             locked_inputs: {
-              lyrics: activeLyrics.id,
-              audio: activeAudio.id,
+              lyrics: activeLyrics?.id,
+              audio: activeAudio?.id,
+              video: activeVideo?.id,
             },
           }),
         },
@@ -178,7 +195,7 @@ export async function confirmV5ProjectInputs(prisma: QivancePrismaClient, projec
 }
 
 function normalizeRequestedInputs(upload: V5InputUpload): Array<{
-  kind: "lyrics" | "audio";
+  kind: V5ChainInputKind;
   originalName: string;
   relativePath: string;
   data: Buffer;
@@ -215,6 +232,16 @@ function normalizeRequestedInputs(upload: V5InputUpload): Array<{
       mime: upload.audioFile.mimeType || mimeForAudioExtension(extension),
     });
   }
+  if (upload.videoFile) {
+    const extension = safeVideoExtension(upload.videoFile.filename);
+    inputs.push({
+      kind: "video" as const,
+      originalName: upload.videoFile.filename,
+      relativePath: `inputs/video/source_video_${timestamp}${extension}`,
+      data: nonEmptyFile(upload.videoFile, "video_file").data,
+      mime: upload.videoFile.mimeType || "video/mp4",
+    });
+  }
   return inputs;
 }
 
@@ -235,12 +262,34 @@ function safeAudioExtension(filename: string): ".mp3" | ".wav" {
   throw new Error("audio_file must be .mp3 or .wav.");
 }
 
+function safeVideoExtension(filename: string): ".mp4" {
+  const extension = path.extname(filename).toLowerCase();
+  if (extension === ".mp4") return extension;
+  throw new Error("video_file must be .mp4.");
+}
+
 function mimeForLyricsExtension(extension: ".md" | ".txt"): string {
   return extension === ".md" ? "text/markdown" : "text/plain";
 }
 
 function mimeForAudioExtension(extension: ".mp3" | ".wav"): string {
   return extension === ".mp3" ? "audio/mpeg" : "audio/wav";
+}
+
+function stablePathForInputKind(kind: V5ChainInputKind): string {
+  switch (kind) {
+    case "lyrics":
+      return "lyrics.md";
+    case "audio":
+      return "active_music_take.mp3";
+    case "video":
+      return "source_video.mp4";
+  }
+}
+
+function humanInputList(kinds: V5ChainInputKind[]): string {
+  if (kinds.length <= 2) return kinds.join(" and ");
+  return `${kinds.slice(0, -1).join(", ")}, and ${kinds.at(-1)}`;
 }
 
 function sha256Buffer(data: Buffer): string {

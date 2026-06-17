@@ -1,4 +1,5 @@
 import type { V3ProjectListItem } from "./api-types.ts";
+import type { HtmlVideoPreviewModel } from "../video-html/preview-model.ts";
 import type { SchedulerStatusSummary } from "../scheduler/scheduler-status.ts";
 import type { WorkbenchAgentRunSummary, WorkbenchArtifact, WorkbenchFileRef, WorkbenchProjectStatus, WorkbenchStep } from "./project-status.ts";
 
@@ -101,7 +102,7 @@ export function renderWorkbenchProjectsPage(input: { projects: V3ProjectListItem
       <h2>Projects</h2>
       <form data-action="create-v5-project" class="toolbar">
         <label>Title <input name="title" required></label>
-        <label>Content type <select name="content_type"><option value="chat_dialogue_mv">chat_dialogue_mv</option></select></label>
+        <label>Content type <select name="content_type"><option value="chat_dialogue_mv">chat_dialogue_mv</option><option value="video_chain">video_chain</option></select></label>
         <label>Description <input name="description"></label>
         <button type="submit">Create V5 Project</button>
       </form>
@@ -169,6 +170,7 @@ export function renderWorkbenchV5ProjectDetailPage(input: { detail: V5WorkbenchP
         ${badge(detail.status)}
       </div>
       <p><code>${escapeHtml(detail.project_id)}</code> <code>${escapeHtml(detail.project_root)}</code></p>
+      ${detail.content_type === "video_chain" ? `<p><a class="button" href="/projects/${encodeURIComponent(detail.project_id)}/video-chain">Open video_chain</a></p>` : ""}
     </header>
     <div class="grid">
       ${section("V5 Inputs", v5InputsBlock(detail))}
@@ -178,6 +180,75 @@ export function renderWorkbenchV5ProjectDetailPage(input: { detail: V5WorkbenchP
     </div>
     ${v5ClientScript(detail.project_id)}
   `);
+}
+
+export function renderWorkbenchV6VideoChainPage(input: { detail: V5WorkbenchProjectDetail }): string {
+  const detail = input.detail;
+  const previewReady = hasArtifact(detail, "data/chains/video_chain/frame_contracts.json");
+  const finalReady = hasArtifact(detail, "exports/video_chain/final.mp4");
+  return layout(`${detail.title} - Qivance V6 video_chain`, `
+    <header class="page-header">
+      <a href="/projects/${encodeURIComponent(detail.project_id)}">Project</a>
+      <h1>${escapeHtml(detail.title)}</h1>
+      <div class="meta">
+        ${badge("v6_video_chain")}
+        ${badge(detail.status)}
+      </div>
+      <p><code>${escapeHtml(detail.project_id)}</code> <code>${escapeHtml(detail.project_root)}</code></p>
+    </header>
+    <div class="grid video-chain-grid">
+      ${section("Inputs", v5InputsBlock(detail))}
+      ${section("Run Control", v5RunControlBlock(detail))}
+      ${section("html-video Preview", videoChainPreviewBlock(detail, previewReady))}
+      ${section("LLM Revision", videoChainRevisionBlock(detail, previewReady))}
+      ${section("Export", videoChainExportBlock(detail, finalReady))}
+      ${section("Artifacts", v5ArtifactsBlock(detail))}
+      ${section("Task Events", v5EventsBlock(detail))}
+    </div>
+    ${videoChainClientScript(detail.project_id)}
+  `);
+}
+
+export function renderHtmlVideoPreviewPlayer(input: { model: HtmlVideoPreviewModel }): string {
+  const model = input.model;
+  const frames = model.frames;
+  const firstFrame = frames[0];
+  const timelineRows = frames.map((frame) => `
+    <button type="button" data-frame-url="${escapeHtml(frame.previewUrl)}" data-frame-label="${escapeHtml(`Frame ${frame.order + 1}`)}">
+      ${escapeHtml(String(frame.order + 1).padStart(2, "0"))}
+      <small>${escapeHtml(`${frame.startSec}s-${frame.endSec}s`)}</small>
+    </button>
+  `).join("");
+  return `<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>${escapeHtml(model.smallProjectId)} preview</title>
+  <style>
+    body{margin:0;background:#111;color:#f7f7f7;font-family:system-ui,-apple-system,Segoe UI,sans-serif}
+    main{display:grid;grid-template-rows:minmax(0,1fr) auto;min-height:100vh}
+    iframe{width:100%;height:100%;min-height:420px;border:0;background:#000}
+    .timeline{display:flex;gap:8px;overflow:auto;padding:10px;background:#1c1f24;border-top:1px solid #333}
+    button{min-width:64px;border:1px solid #4b5563;background:#252a31;color:#fff;border-radius:6px;padding:8px;cursor:pointer}
+    small{display:block;color:#cbd5e1;font-size:11px}
+  </style>
+</head>
+<body>
+  <main>
+    ${firstFrame ? `<iframe id="frame" title="html-video frame preview" src="${escapeHtml(firstFrame.previewUrl)}"></iframe>` : `<p>No preview frames.</p>`}
+    <nav class="timeline" aria-label="Preview frames">${timelineRows}</nav>
+  </main>
+  <script>
+    const frame = document.getElementById("frame");
+    document.querySelectorAll("[data-frame-url]").forEach((button) => {
+      button.addEventListener("click", () => {
+        if (frame) frame.src = button.getAttribute("data-frame-url");
+      });
+    });
+  </script>
+</body>
+</html>`;
 }
 
 function v5InputsBlock(detail: V5WorkbenchProjectDetail): string {
@@ -193,7 +264,11 @@ function v5InputsBlock(detail: V5WorkbenchProjectDetail): string {
         <td><small>${escapeHtml(input.sha256.slice(0, 12))}</small></td>
       </tr>
     `).join("");
-  const canConfirm = hasActiveV5Input(detail, "lyrics") && hasActiveV5Input(detail, "audio") && !hasActiveV5Run(detail);
+  const requiresVideo = detail.content_type === "video_chain";
+  const canConfirm = hasActiveV5Input(detail, "lyrics")
+    && hasActiveV5Input(detail, "audio")
+    && (!requiresVideo || hasActiveV5Input(detail, "video"))
+    && !hasActiveV5Run(detail);
   return `
     <table>
       <thead><tr><th>Kind</th><th>Status</th><th>Name</th><th>Path</th><th>Stable</th><th>SHA</th></tr></thead>
@@ -203,6 +278,7 @@ function v5InputsBlock(detail: V5WorkbenchProjectDetail): string {
       <label>Lyrics text <textarea name="lyrics_text" rows="5"></textarea></label>
       <label>Lyrics file <input type="file" name="lyrics_file" accept=".md,.txt,text/markdown,text/plain"></label>
       <label>Audio file <input type="file" name="audio_file" accept=".mp3,.wav,audio/mpeg,audio/wav"></label>
+      ${requiresVideo ? `<label>Background MP4 <input type="file" name="video_file" accept=".mp4,video/mp4"></label>` : ""}
       <label class="inline"><input type="checkbox" name="replace" value="true"> Replace active inputs</label>
       <button type="submit">Upload Inputs</button>
     </form>
@@ -239,12 +315,7 @@ function v5RunControlBlock(detail: V5WorkbenchProjectDetail): string {
 }
 
 function v5ArtifactsBlock(detail: V5WorkbenchProjectDetail): string {
-  const rows = [
-    ["final_mp4", "exports/chat_dialogue_mv/final.mp4"],
-    ["visual_mp4", "exports/chat_dialogue_mv/visual.mp4"],
-    ["render_manifest", "exports/chat_dialogue_mv/render_manifest.json"],
-    ["qa_report", "data/chains/chat_dialogue_mv/qa_report.json"],
-  ].map(([label, artifactPath]) => {
+  const rows = artifactPathsForDetail(detail).map(([label, artifactPath]) => {
     const artifact = detail.artifacts.find((item) => item.path === artifactPath);
     return `
       <tr>
@@ -281,9 +352,72 @@ function hasActiveV5Run(detail: V5WorkbenchProjectDetail): boolean {
   return detail.runs.some((run) => ["queued", "running", "stopping"].includes(run.status));
 }
 
+function hasArtifact(detail: V5WorkbenchProjectDetail, artifactPath: string): boolean {
+  return detail.artifacts.some((artifact) => artifact.path === artifactPath && artifact.status === "current");
+}
+
+function artifactPathsForDetail(detail: V5WorkbenchProjectDetail): Array<[string, string]> {
+  if (detail.content_type === "video_chain") {
+    return [
+      ["html_video_frames", "data/chains/video_chain/frame_contracts.json"],
+      ["visual_mp4", "exports/video_chain/visual.mp4"],
+      ["final_mp4", "exports/video_chain/final.mp4"],
+      ["render_manifest", "exports/video_chain/render_manifest.json"],
+      ["qa_report", "data/chains/video_chain/qa_report.json"],
+      ["section_map", "data/timing/section_map.json"],
+      ["source_video_import", "data/source/source_video_import.json"],
+    ];
+  }
+  return [
+    ["final_mp4", "exports/chat_dialogue_mv/final.mp4"],
+    ["visual_mp4", "exports/chat_dialogue_mv/visual.mp4"],
+    ["render_manifest", "exports/chat_dialogue_mv/render_manifest.json"],
+    ["qa_report", "data/chains/chat_dialogue_mv/qa_report.json"],
+  ];
+}
+
+function videoChainPreviewBlock(detail: V5WorkbenchProjectDetail, previewReady: boolean): string {
+  if (!previewReady) return `<p>Preview is not ready.</p>`;
+  return `
+    <iframe id="video-chain-preview" title="html-video preview" src="/projects/${encodeURIComponent(detail.project_id)}/video-chain/preview"></iframe>
+    <p><a class="button" href="/api/projects/${encodeURIComponent(detail.project_id)}/chains/video-chain/preview">Preview JSON</a></p>
+  `;
+}
+
+function videoChainRevisionBlock(detail: V5WorkbenchProjectDetail, previewReady: boolean): string {
+  return `
+    <form data-action="video-chain-revise">
+      <label>Scope
+        <select name="scope_type">
+          <option value="project">Project</option>
+          <option value="scene">Scene</option>
+        </select>
+      </label>
+      <label>Scene ID <input name="scene_id" placeholder="video_card_001"></label>
+      <label>Request <textarea name="request" rows="4" ${previewReady ? "" : "disabled"}></textarea></label>
+      <button type="submit" ${previewReady ? "" : "disabled"}>Submit Revision</button>
+    </form>
+    <pre id="revision-result" aria-live="polite"></pre>
+  `;
+}
+
+function videoChainExportBlock(detail: V5WorkbenchProjectDetail, finalReady: boolean): string {
+  const download = finalReady
+    ? `<a class="button" href="/api/projects/${encodeURIComponent(detail.project_id)}/chains/video-chain/export/final.mp4">Download final MP4</a>`
+    : `<button disabled>Download final MP4</button>`;
+  return `
+    <p><button data-action="video-chain-export">Render final.mp4</button></p>
+    <p>${download}</p>
+    <pre id="export-result" aria-live="polite"></pre>
+  `;
+}
+
 function v5ArtifactLink(projectId: string, artifactPath: string): string {
   if (artifactPath === "exports/chat_dialogue_mv/final.mp4") {
     return `<a href="/api/projects/${encodeURIComponent(projectId)}/chains/chat-dialogue-mv/export/final.mp4">final.mp4</a>`;
+  }
+  if (artifactPath === "exports/video_chain/final.mp4") {
+    return `<a href="/api/projects/${encodeURIComponent(projectId)}/chains/video-chain/export/final.mp4">final.mp4</a>`;
   }
   return `<a href="/projects/${encodeURIComponent(projectId)}/download?path=${encodeURIComponent(artifactPath)}">${escapeHtml(artifactPath)}</a>`;
 }
@@ -517,6 +651,85 @@ function v5ClientScript(projectId: string): string {
           method: "POST",
         }));
       });
+    });
+  </script>`;
+}
+
+function videoChainClientScript(projectId: string): string {
+  return `<script>
+    const projectId = ${JSON.stringify(projectId)};
+    const result = document.getElementById("action-result");
+    const revisionResult = document.getElementById("revision-result");
+    const exportResult = document.getElementById("export-result");
+    const preview = document.getElementById("video-chain-preview");
+    async function parseJson(response) {
+      return await response.json().catch(() => ({}));
+    }
+    async function reloadAfterResponse(response, target) {
+      const json = await parseJson(response);
+      if (!response.ok) {
+        if (target) target.textContent = JSON.stringify(json, null, 2);
+        return;
+      }
+      location.reload();
+    }
+    document.querySelector("[data-action='v5-input-upload']")?.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      if (result) result.textContent = "Running...";
+      await reloadAfterResponse(await fetch("/api/projects/" + encodeURIComponent(projectId) + "/inputs", {
+        method: "POST",
+        body: new FormData(event.currentTarget),
+      }), result);
+    });
+    document.querySelector("[data-action='v5-confirm-inputs']")?.addEventListener("click", async () => {
+      if (result) result.textContent = "Running...";
+      await reloadAfterResponse(await fetch("/api/projects/" + encodeURIComponent(projectId) + "/inputs/confirm", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: "{}",
+      }), result);
+    });
+    document.querySelectorAll("[data-action='v5-stop-run']").forEach((button) => {
+      button.addEventListener("click", async () => {
+        const runId = button.getAttribute("data-run-id");
+        if (!runId) return;
+        if (result) result.textContent = "Running...";
+        await reloadAfterResponse(await fetch("/api/projects/" + encodeURIComponent(projectId) + "/runs/" + encodeURIComponent(runId) + "/stop", {
+          method: "POST",
+        }), result);
+      });
+    });
+    document.querySelector("[data-action='video-chain-revise']")?.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      const data = new FormData(event.currentTarget);
+      const scopeType = String(data.get("scope_type") || "project");
+      const sceneId = String(data.get("scene_id") || "").trim();
+      const scope = scopeType === "scene" ? { type: "scene", scene_id: sceneId } : { type: "project" };
+      if (revisionResult) revisionResult.textContent = "Running...";
+      const response = await fetch("/api/projects/" + encodeURIComponent(projectId) + "/chains/video-chain/revise", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ scope, request: data.get("request") }),
+      });
+      const json = await parseJson(response);
+      if (!response.ok) {
+        if (revisionResult) revisionResult.textContent = JSON.stringify(json, null, 2);
+        return;
+      }
+      if (revisionResult) revisionResult.textContent = JSON.stringify({
+        status: "preview_refreshed",
+        revision_request: json.revision_request?.path,
+        agent_run: json.agent_run?.path,
+      }, null, 2);
+      if (preview) preview.src = "/projects/" + encodeURIComponent(projectId) + "/video-chain/preview?t=" + Date.now();
+    });
+    document.querySelector("[data-action='video-chain-export']")?.addEventListener("click", async () => {
+      if (exportResult) exportResult.textContent = "Running...";
+      await reloadAfterResponse(await fetch("/api/projects/" + encodeURIComponent(projectId) + "/chains/video-chain/export/render", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: "{}",
+      }), exportResult);
     });
   </script>`;
 }
