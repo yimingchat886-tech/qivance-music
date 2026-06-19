@@ -141,3 +141,45 @@ Implemented and documented V6 video_chain product entry, added docs Plan/SPEC/PR
 ### Next Steps
 
 - None - task complete
+
+
+## Session 5: Codex Trellis Ponytail standard
+
+**Date**: 2026-06-19
+**Task**: Codex Trellis Ponytail standard
+**Branch**: `codex/planv5-track-trellis-files`
+
+### Summary
+
+Fixed active Codex Ponytail install, wired Ponytail review into Trellis check, and recorded the project development standard.
+
+### Main Changes
+
+- Fixed active Codex App marketplace loading by using the WSL-visible claude-migrated marketplace path.
+- Installed and enabled `ponytail@ponytail` in `/mnt/c/Users/Jym/.codex`.
+- Created isolated Ponytail debug venv at `/home/jym/.local/share/codex/venvs/ponytail-test` for pandas-backed plugin self-tests.
+- Wired Ponytail review into both `trellis-check` surfaces: Codex sub-agent config and inline skill.
+- Added task design notes and expanded PRD/context JSONL to cover environment repair plus check-phase integration.
+- Verification: task context validate passed, trellis-check TOML parsed, Ponytail installed/enabled, hook JS syntax passed, Ponytail plugin tests passed with the debug venv, and `git diff --check` passed.
+
+
+### Git Commits
+
+(Recorded by the commit that includes this journal entry)
+
+### Testing
+
+- [OK] `python3 ./.trellis/scripts/task.py validate 06-19-codex-trellis-ponytail-standard`
+- [OK] `python3` TOML parse for `.codex/agents/trellis-check.toml`
+- [OK] `CODEX_HOME=/mnt/c/Users/Jym/.codex codex plugin list`
+- [OK] Ponytail hook `node --check`
+- [OK] `PATH=/home/jym/.local/share/codex/venvs/ponytail-test/bin:$PATH npm test -- --runInBand`
+- [OK] `git diff --check`
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
