@@ -24,6 +24,21 @@ test("builds local-only chat frame contracts and HTML", () => {
   const validation = validateChatFrameHtml(html);
   assert.equal(validation.ok, true, validation.issues.join("\n"));
   assert.match(html, /hello world\?/);
+  assert.match(html, /data-douyin-chat-shell/);
+  assert.doesNotMatch(html, /class="status-bar"|15:30|battery/);
+  assert.match(html, /class="icon-button back"/);
+  assert.match(html, /class="avatar-slot header-avatar avatar-left avatar-contact"/);
+  assert.match(html, /data-avatar-role="contact"/);
+  assert.match(html, /class="avatar-slot message-avatar avatar-left"/);
+  assert.match(html, /class="avatar-slot message-avatar avatar-right"/);
+  assert.match(html, /class="quick-actions"/);
+  assert.match(html, /打招呼/);
+  assert.match(html, /端午快乐/);
+  assert.match(html, /class="composer"/);
+  assert.match(html, /class="round-icon voice-icon"/);
+  assert.match(html, /class="round-icon smile-icon"/);
+  assert.match(html, /class="round-icon plus-icon"/);
+  assert.match(html, /发消息或按住说话/);
   assert.doesNotMatch(html, /https?:\/\//);
 });
 
