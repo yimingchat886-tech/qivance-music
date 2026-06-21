@@ -3,11 +3,21 @@ import path from "node:path";
 import type { ChatFrameContract } from "./chat-frame-contracts.ts";
 import type { ConversationPlan } from "./conversation-plan.ts";
 
+type ChatFrameUiProfile = {
+  contact_name?: string;
+  contact_status?: string;
+  contact_avatar_src?: string;
+  left_avatar_src?: string;
+  right_avatar_src?: string;
+};
+
 export function renderChatFrameHtml(input: {
   frame: ChatFrameContract;
   conversationPlan: ConversationPlan;
 }): string {
   const messages = input.conversationPlan.messages.filter((message) => input.frame.message_ids.includes(message.id));
+  const uiProfile = chatFrameUiProfile(input.conversationPlan);
+  const headerTitle = latestVisibleMessage(messages)?.side === "left" ? "对方正在输入...." : uiProfile.contactName;
   const payload = JSON.stringify({ frame: input.frame, messages }).replace(/</g, "\\u003c");
   return `<!doctype html>
 <html lang="zh-CN">
@@ -64,14 +74,14 @@ html, body { margin: 0; width: 100%; height: 100%; background: #eef0f2; color: #
 <main class="stage" data-douyin-chat-shell>
   <header class="top" aria-label="抖音私信页头部">
     <div class="icon-button back" aria-hidden="true"></div>
-    <div class="avatar-slot header-avatar avatar-left avatar-contact" data-avatar-role="contact" aria-hidden="true"></div>
-    <div class="title"><div class="name">蒲涛</div><div class="online">今天在线</div></div>
+    <div class="avatar-slot header-avatar avatar-left avatar-contact" data-avatar-role="contact" aria-hidden="true">${avatarImg(uiProfile.contactAvatarSrc)}</div>
+    <div class="title"><div class="name">${escapeHtml(headerTitle)}</div><div class="online">${escapeHtml(uiProfile.contactStatus)}</div></div>
     <div class="icon-button video-icon" aria-hidden="true"></div>
     <div class="icon-button more" aria-hidden="true"><span></span><span></span><span></span></div>
   </header>
   <section class="chat" aria-label="聊天消息">
     <div class="time-marker">刚刚</div>
-${messages.map((message) => `    <div class="row ${message.side}"><div class="avatar-slot message-avatar avatar-${message.side}" data-avatar-role="${message.side}-speaker" aria-hidden="true"></div><div class="bubble" data-message-id="${message.id}">${escapeHtml(message.display_text)}</div></div>`).join("\n")}
+${messages.map((message) => `    <div class="row ${message.side}"><div class="avatar-slot message-avatar avatar-${message.side}" data-avatar-role="${message.side}-speaker" aria-hidden="true">${avatarImg(message.side === "left" ? uiProfile.leftAvatarSrc : uiProfile.rightAvatarSrc)}</div><div class="bubble" data-message-id="${message.id}">${escapeHtml(message.display_text)}</div></div>`).join("\n")}
   </section>
   <div class="quick-actions" aria-hidden="true"><div class="chip"><span class="chip-icon">☺</span><span>打招呼</span></div><div class="chip"><span class="chip-icon">龙</span><span>端午快乐</span></div><div class="chip"><span class="chip-icon">♡</span><span>比心</span></div><div class="chip"><span class="chip-icon">👍</span><span>赞</span></div><div class="chip"><span class="chip-icon">笑</span><span>捂脸</span></div></div>
   <div class="composer" aria-hidden="true"><div class="grid-icon"><span></span><span></span><span></span><span></span></div><div class="placeholder">发消息或按住说话...</div><div class="round-icon voice-icon"><span></span></div><div class="round-icon smile-icon"></div><div class="round-icon plus-icon"></div></div>
@@ -100,6 +110,7 @@ export function validateChatFrameHtml(html: string): { ok: boolean; issues: stri
   if (/class="status-bar"|15:30|battery/.test(html)) issues.push("chat frame html must not include a phone status bar");
   if (!/class="icon-button back"/.test(html)) issues.push("chat frame html must include a CSS-drawn back icon slot");
   if (!/class="avatar-slot header-avatar/.test(html)) issues.push("chat frame html must include a replaceable header avatar slot");
+  if (!/data-avatar-role="contact"/.test(html)) issues.push("chat frame html must expose a contact avatar slot");
   if (!/class="quick-actions"/.test(html)) issues.push("chat frame html must include quick action chips");
   if (!/class="composer"/.test(html)) issues.push("chat frame html must include the bottom input composer");
   if (!/class="avatar-slot message-avatar /.test(html)) issues.push("chat frame html must include replaceable message avatar slots");
@@ -107,10 +118,44 @@ export function validateChatFrameHtml(html: string): { ok: boolean; issues: stri
   return { ok: issues.length === 0, issues };
 }
 
+function chatFrameUiProfile(conversationPlan: ConversationPlan): {
+  contactName: string;
+  contactStatus: string;
+  contactAvatarSrc?: string;
+  leftAvatarSrc?: string;
+  rightAvatarSrc?: string;
+} {
+  const ui = (conversationPlan as ConversationPlan & { chat_ui?: ChatFrameUiProfile }).chat_ui ?? {};
+  return {
+    contactName: nonEmpty(ui.contact_name) ?? "蒲涛",
+    contactStatus: nonEmpty(ui.contact_status) ?? "今天在线",
+    contactAvatarSrc: nonEmpty(ui.contact_avatar_src),
+    leftAvatarSrc: nonEmpty(ui.left_avatar_src),
+    rightAvatarSrc: nonEmpty(ui.right_avatar_src),
+  };
+}
+
+function latestVisibleMessage(messages: ConversationPlan["messages"]): ConversationPlan["messages"][number] | undefined {
+  return messages.reduce<ConversationPlan["messages"][number] | undefined>((latest, message) => {
+    if (!latest || message.start_sec >= latest.start_sec) return message;
+    return latest;
+  }, undefined);
+}
+
+function avatarImg(src: string | undefined): string {
+  return src ? `<img class="avatar-img" src="${escapeHtml(src)}" alt="">` : "";
+}
+
+function nonEmpty(value: string | undefined): string | undefined {
+  const trimmed = value?.trim();
+  return trimmed ? trimmed : undefined;
+}
+
 function escapeHtml(value: string): string {
   return value
     .replaceAll("&", "&amp;")
     .replaceAll("<", "&lt;")
     .replaceAll(">", "&gt;")
-    .replaceAll("\"", "&quot;");
+    .replaceAll("\"", "&quot;")
+    .replaceAll("'", "&#39;");
 }

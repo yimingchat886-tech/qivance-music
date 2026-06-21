@@ -24,6 +24,8 @@ test("builds local-only chat frame contracts and HTML", () => {
   const validation = validateChatFrameHtml(html);
   assert.equal(validation.ok, true, validation.issues.join("\n"));
   assert.match(html, /hello world\?/);
+  assert.match(html, /<div class="name">蒲涛<\/div>/);
+  assert.doesNotMatch(html, /对方正在输入/);
   assert.match(html, /data-douyin-chat-shell/);
   assert.doesNotMatch(html, /class="status-bar"|15:30|battery/);
   assert.match(html, /class="icon-button back"/);
@@ -40,6 +42,54 @@ test("builds local-only chat frame contracts and HTML", () => {
   assert.match(html, /class="round-icon plus-icon"/);
   assert.match(html, /发消息或按住说话/);
   assert.doesNotMatch(html, /https?:\/\//);
+});
+
+test("uses configurable contact profile and typing title for newly visible left messages", () => {
+  const conversationPlan = conversationFixture();
+  const customPlan = {
+    ...conversationPlan,
+    chat_ui: {
+      contact_name: "林同学",
+      contact_status: "在线",
+      contact_avatar_src: "../assets/avatars/contact.png",
+      left_avatar_src: "../assets/avatars/left.png",
+      right_avatar_src: "../assets/avatars/right.png",
+    },
+  };
+
+  const rightHtml = renderChatFrameHtml({
+    frame: {
+      frame_id: "custom_right_frame",
+      html_path: "video/html-video/.html-video/projects/demo_project/frames/custom_right_frame.html",
+      duration_sec: 1,
+      section_ids: ["sec_001"],
+      message_ids: ["msg_001", "msg_002"],
+      text_policy: "verbatim_lyrics",
+      forbidden_remote_resources: true,
+    },
+    conversationPlan: customPlan,
+  });
+  assert.match(rightHtml, /<div class="name">林同学<\/div>/);
+  assert.doesNotMatch(rightHtml, /对方正在输入/);
+  assert.match(rightHtml, /src="\.\.\/assets\/avatars\/contact\.png"/);
+  assert.match(rightHtml, /src="\.\.\/assets\/avatars\/left\.png"/);
+  assert.match(rightHtml, /src="\.\.\/assets\/avatars\/right\.png"/);
+
+  const leftHtml = renderChatFrameHtml({
+    frame: {
+      frame_id: "custom_left_frame",
+      html_path: "video/html-video/.html-video/projects/demo_project/frames/custom_left_frame.html",
+      duration_sec: 1,
+      section_ids: ["sec_001"],
+      message_ids: ["msg_001"],
+      text_policy: "verbatim_lyrics",
+      forbidden_remote_resources: true,
+    },
+    conversationPlan: customPlan,
+  });
+  assert.match(leftHtml, /<div class="name">对方正在输入\.\.\.\.<\/div>/);
+  assert.doesNotMatch(leftHtml, /<div class="name">林同学<\/div>/);
+  assert.match(leftHtml, /data-message-id="msg_001"/);
 });
 
 test("rejects frame contracts that do not cover all messages", () => {

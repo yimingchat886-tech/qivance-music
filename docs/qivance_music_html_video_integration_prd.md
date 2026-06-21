@@ -54,6 +54,53 @@ V5 明确不做：
 - video_chain（下一版本再做）
 ```
 
+### 0.3 V7 聊天页视觉与后台可编辑资料目标
+
+V7 的 `chat_dialogue_mv` 视觉目标是模拟抖音私信页，不新增链路、不改变 timing / scheduler / export 合同。完整目标态包括：
+
+```text
+- 聊天帧默认显示联系人名字和头像
+- 只有左侧新气泡出现的帧，顶部标题才临时显示“对方正在输入....”
+- 其它帧顶部恢复联系人名字
+- 联系人名字、联系人头像、左右消息头像应可从后台/admin 编辑
+- 后台编辑后的资料进入 chat frame renderer，不需要改源码
+- 头像使用本地锁定 PNG 资源，不使用远程 URL
+- 聊天文本仍来自歌词原文，不改写、不转译、不生成图片消息卡片
+```
+
+V7 最小版本先在 renderer 层支持可选 `chat_ui` 配置字段：
+
+```json
+{
+  "chat_ui": {
+    "contact_name": "蒲涛",
+    "contact_status": "今天在线",
+    "contact_avatar_src": "../assets/avatars/contact.png",
+    "left_avatar_src": "../assets/avatars/left.png",
+    "right_avatar_src": "../assets/avatars/right.png"
+  }
+}
+```
+
+后续完整后台版本再补：
+
+```text
+- 后台/admin 表单编辑联系人名和头像
+- 头像文件上传、锁定、路径校验、替换与回滚
+- 配置写入项目级 artifact 或控制面记录
+- frame 构建时把配置合并进 conversation_plan 或 renderer context
+- Workbench 展示当前联系人资料和头像资源状态
+```
+
+完整后台版本必须继续遵守：
+
+```text
+- 不新增远程资源依赖
+- 不把媒体 blob 存入 SQLite
+- 不改变 chat_dialogue_mv 的 chain id、artifact 路径、export 路径、manifest v4 合同
+- 不让 UI 配置影响歌词原文、timing 或 final audio mux
+```
+
 ---
 
 ## 1. 产品定位
