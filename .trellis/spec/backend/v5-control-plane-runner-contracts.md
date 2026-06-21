@@ -74,7 +74,7 @@
   - `QIVANCE_WHISPERX_REQUIRE_GPU`: `0` disables GPU requirement
   - `QIVANCE_WHISPERX_LANGUAGE`: alignment language
   - `QIVANCE_WHISPERX_MODEL`: metadata/model label
-  - `QIVANCE_WHISPERX_CACHE_DIR` / `HF_HOME`: alignment cache root
+  - `QIVANCE_WHISPERX_CACHE_DIR` / `HF_HOME`: alignment cache root; default is repo-local `.cache/huggingface`
   - `QIVANCE_WHISPERX_TIMEOUT_MS`: alignment timeout
   - `NUMBA_CACHE_DIR`, `TORCH_HOME`, `XDG_CACHE_HOME`: default to writable `/tmp` paths in the WhisperX runner if unset
 
@@ -110,6 +110,7 @@
 - Bad: let a video_chain LLM revision automatically rerender or remux `final.mp4`.
 - Bad: accept a video_chain preview frame that omits the locked background MP4.
 - Bad: assume WhisperX word timing always has a `word` field; current script writes `text`, and code must accept either `word` or `text`.
+- Bad: assume chat lyric timing can match only whitespace-delimited words. Chinese lyrics without spaces must match WhisperX chunks by normalized token/character sequence.
 
 ### 6. Tests Required
 
@@ -126,7 +127,7 @@
   - `tests/timing-pipeline-v5.test.ts`
   - `tests/chat-dialogue-runner-v5.test.ts`
   - `tests/chat-conversation-plan.test.ts`
-  - assert stop/recovery, `timing_blocked`, final artifacts, and `artifact_inconsistent`
+  - assert stop/recovery, `timing_blocked`, final artifacts, `artifact_inconsistent`, and Chinese no-whitespace lyric chunk matching
 - Workbench/API:
   - `tests/workbench-html.test.ts`
   - `tests/workbench-v5-api.test.ts`

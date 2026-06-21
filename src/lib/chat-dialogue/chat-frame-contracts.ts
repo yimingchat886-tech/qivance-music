@@ -27,7 +27,7 @@ export function buildChatFrameContracts(input: {
   const frames = input.animationPlan.scroll_windows.map((window, index): ChatFrameContract => ({
     frame_id: `chat_dialogue_mv_${String(index + 1).padStart(3, "0")}`,
     html_path: `video/html-video/.html-video/projects/${input.projectId}/frames/chat_dialogue_mv_${String(index + 1).padStart(3, "0")}.html`,
-    duration_sec: Math.max(0.6, frameEndSec(input.animationPlan, index) - frameStartSec(input.animationPlan, index)),
+    duration_sec: window.end_sec - window.start_sec,
     section_ids: [window.section_id],
     message_ids: window.visible_message_ids,
     text_policy: "verbatim_lyrics",
@@ -38,14 +38,6 @@ export function buildChatFrameContracts(input: {
     chain_id: "chat_dialogue_mv",
     frames,
   };
-}
-
-function frameEndSec(animationPlan: ChatAnimationPlan, index: number): number {
-  return animationPlan.scroll_windows[index + 1]?.start_sec ?? animationPlan.duration_sec;
-}
-
-function frameStartSec(animationPlan: ChatAnimationPlan, index: number): number {
-  return index === 0 ? 0 : animationPlan.scroll_windows[index]?.start_sec ?? 0;
 }
 
 export async function writeChatFrameContracts(input: {

@@ -95,7 +95,7 @@ import { buildChatAnimationPlan, validateChatAnimationPlan, writeChatAnimationPl
 import { buildChatFrameContracts, validateChatFrameContracts, writeChatFrameContracts, type ChatFrameContracts } from "./lib/chat-dialogue/chat-frame-contracts.ts";
 import { renderChatFrameHtml, validateChatFrameHtml, writeChatFrameHtml } from "./lib/chat-dialogue/chat-frame-html.ts";
 import { renderChatFramesToVisual } from "./lib/chat-dialogue/chat-frame-renderer.ts";
-import { buildConversationPlan, validateConversationPlan, writeConversationPlan, type ConversationPlan } from "./lib/chat-dialogue/conversation-plan.ts";
+import { buildConversationPlan, validateConversationPlan, withProjectChatAvatarUi, writeConversationPlan, type ConversationPlan } from "./lib/chat-dialogue/conversation-plan.ts";
 import { writeLyricsLineMap, validateLyricsLineMap, type LyricsLineMap } from "./lib/chat-dialogue/lyrics-line-map.ts";
 import { buildSpeakerAttribution, validateSpeakerAttribution, writeSpeakerAttribution, type SpeakerAttribution } from "./lib/chat-dialogue/speaker-attribution.ts";
 import type { LyricWordTiming, SectionMapLike } from "./lib/chat-dialogue/line-timing.ts";
@@ -993,15 +993,16 @@ async function buildChatConversationPlanForProject(paths: SmallProjectPaths): Pr
     allowDiagnosticFallback: false,
   });
   if (!result.conversationPlan) throw new ApiRouteError(409, "conversation_plan_invalid", result.issues.join("; "));
+  const conversationPlan = await withProjectChatAvatarUi({ projectRoot: paths.projectRoot, conversationPlan: result.conversationPlan });
   assertValidation("conversation_plan_invalid", validateConversationPlan({
-    conversationPlan: result.conversationPlan,
+    conversationPlan,
     lineMap: lineMapResult.lineMap,
     speakerAttribution: speakerResult.speakerAttribution,
   }));
-  const conversationPath = (await writeConversationPlan({ projectRoot: paths.projectRoot, conversationPlan: result.conversationPlan })).path;
+  const conversationPath = (await writeConversationPlan({ projectRoot: paths.projectRoot, conversationPlan })).path;
   await writeChatDialogueChainStatus(paths, "conversation_ready", {
     low_confidence_speaker_count: speakerResult.speakerAttribution.low_confidence_count,
-    conversation_message_count: result.conversationPlan.messages.length,
+    conversation_message_count: conversationPlan.messages.length,
     frame_count: 0,
     frame_validation_status: "missing",
   });
@@ -1015,7 +1016,7 @@ async function buildChatConversationPlanForProject(paths: SmallProjectPaths): Pr
     },
     metrics: {
       low_confidence_speaker_count: speakerResult.speakerAttribution.low_confidence_count,
-      conversation_message_count: result.conversationPlan.messages.length,
+      conversation_message_count: conversationPlan.messages.length,
     },
   };
 }

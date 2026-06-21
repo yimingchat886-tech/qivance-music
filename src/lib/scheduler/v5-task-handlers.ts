@@ -10,7 +10,7 @@ import { buildChatFrameContracts, validateChatFrameContracts, writeChatFrameCont
 import { renderChatFrameHtml, validateChatFrameHtml, writeChatFrameHtml } from "../chat-dialogue/chat-frame-html.ts";
 import { renderChatFramesToVisual } from "../chat-dialogue/chat-frame-renderer.ts";
 import type { ChatFrameContracts } from "../chat-dialogue/chat-frame-contracts.ts";
-import { buildConversationPlan, validateConversationPlan, writeConversationPlan, type ConversationPlan } from "../chat-dialogue/conversation-plan.ts";
+import { buildConversationPlan, validateConversationPlan, withProjectChatAvatarUi, writeConversationPlan, type ConversationPlan } from "../chat-dialogue/conversation-plan.ts";
 import type { LyricWordTiming, SectionMapLike } from "../chat-dialogue/line-timing.ts";
 import { buildLyricsLineMap, validateLyricsLineMap, writeLyricsLineMap, type LyricsLineMap } from "../chat-dialogue/lyrics-line-map.ts";
 import { buildSpeakerAttribution, validateSpeakerAttribution, writeSpeakerAttribution, type SpeakerAttribution } from "../chat-dialogue/speaker-attribution.ts";
@@ -97,9 +97,6 @@ async function runTimingPipelineTask({ prisma, task }: V5SchedulerTaskHandlerInp
   if (!validation.ok) throw new Error(`timing_failed: ${validation.issues.join("; ")}`);
 
   const runWhisperXAlignment = deps.runWhisperXAlignment ?? runWhisperXAlignmentDefault;
-  const whisperXCacheDir = process.env.QIVANCE_WHISPERX_CACHE_DIR
-    ?? process.env.HF_HOME
-    ?? path.join(project.projectRoot, ".cache/huggingface");
   await runWhisperXAlignment({
     pythonExecutable: pythonEnv.pythonExecutable,
     scriptPath: path.join(repoRoot, "scripts/python/align-lyrics-whisperx.py"),
@@ -110,7 +107,7 @@ async function runTimingPipelineTask({ prisma, task }: V5SchedulerTaskHandlerInp
     language: process.env.QIVANCE_WHISPERX_LANGUAGE ?? "zh",
     device: pythonEnv.whisperx.device,
     model: pythonEnv.whisperx.model,
-    cacheDir: whisperXCacheDir,
+    cacheDir: pythonEnv.whisperx.cacheDir,
     requireGpu: pythonEnv.whisperx.requireGpu,
     timeoutMs: Number(process.env.QIVANCE_WHISPERX_TIMEOUT_MS ?? 10 * 60 * 1000),
   }).catch((error) => {
@@ -177,8 +174,9 @@ async function buildConversationPlanTask({ prisma, task }: V5SchedulerTaskHandle
     allowDiagnosticFallback: false,
   });
   if (!result.conversationPlan) throw new Error(`conversation_plan_invalid: ${result.issues.join("; ")}`);
-  assertValidation("conversation_plan_invalid", validateConversationPlan({ conversationPlan: result.conversationPlan, lineMap, speakerAttribution }));
-  await writeConversationPlan({ projectRoot: project.projectRoot, conversationPlan: result.conversationPlan });
+  const conversationPlan = await withProjectChatAvatarUi({ projectRoot: project.projectRoot, conversationPlan: result.conversationPlan });
+  assertValidation("conversation_plan_invalid", validateConversationPlan({ conversationPlan, lineMap, speakerAttribution }));
+  await writeConversationPlan({ projectRoot: project.projectRoot, conversationPlan });
 }
 
 async function buildChatFramesTask({ prisma, task }: V5SchedulerTaskHandlerInput): Promise<void> {

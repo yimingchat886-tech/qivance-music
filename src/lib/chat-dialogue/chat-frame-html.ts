@@ -1,15 +1,7 @@
 import { copyFile, mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 import type { ChatFrameContract } from "./chat-frame-contracts.ts";
-import type { ConversationPlan } from "./conversation-plan.ts";
-
-type ChatFrameUiProfile = {
-  contact_name?: string;
-  contact_status?: string;
-  contact_avatar_src?: string;
-  left_avatar_src?: string;
-  right_avatar_src?: string;
-};
+import type { ChatConversationUiProfile, ConversationPlan } from "./conversation-plan.ts";
 
 type ResolvedChatFrameUiProfile = {
   contactName: string;
@@ -107,6 +99,7 @@ export async function writeChatFrameHtml(input: {
   await mkdir(path.dirname(input.htmlPath), { recursive: true });
   await writeFile(input.htmlPath, renderChatFrameHtml(input), "utf8");
   await writeStatusBarIconAssets(path.dirname(input.htmlPath));
+  await writeChatAvatarAssets({ htmlPath: input.htmlPath });
 }
 
 export function validateChatFrameHtml(html: string): { ok: boolean; issues: string[] } {
@@ -128,8 +121,7 @@ export function validateChatFrameHtml(html: string): { ok: boolean; issues: stri
   if (/quick-actions|composer|发消息或按住说话/.test(html)) issues.push("chat frame html must not render the old bottom composer or quick actions");
   if (!/class="header-avatar-wrap"/.test(html)) issues.push("chat frame html must include a replaceable header avatar slot");
   if (!/data-avatar-role="contact"/.test(html)) issues.push("chat frame html must expose a contact avatar slot");
-  if (!/class="avatar-slot message-avatar /.test(html)) issues.push("chat frame html must include replaceable message avatar slots");
-  if (/class="row right"/.test(html) && !/class="read-receipt"/.test(html)) issues.push("right-side messages must expose a read receipt");
+  if (/class="row (left|right)"/.test(html) && !/class="avatar-slot message-avatar /.test(html)) issues.push("chat frame html must include replaceable message avatar slots");
   if (/letter-spacing:\s*-/.test(html)) issues.push("chat frame html must not use negative letter spacing");
   return { ok: issues.length === 0, issues };
 }
@@ -140,8 +132,19 @@ async function writeStatusBarIconAssets(frameDir: string): Promise<void> {
   await Promise.all(STATUS_ICON_FILES.map((fileName) => copyFile(new URL(`./assets/status_bar_icons/${fileName}`, import.meta.url), path.join(outputDir, fileName))));
 }
 
+async function writeChatAvatarAssets(input: {
+  htmlPath: string;
+}): Promise<void> {
+  const outputDir = path.resolve(path.dirname(input.htmlPath), "../assets/avatars");
+  await mkdir(outputDir, { recursive: true });
+  await Promise.all([
+    copyFile(new URL("./assets/default_avatars/1.jpg", import.meta.url), path.join(outputDir, "1.jpg")),
+    copyFile(new URL("./assets/default_avatars/2.jpg", import.meta.url), path.join(outputDir, "2.jpg")),
+  ]);
+}
+
 function chatFrameUiProfile(conversationPlan: ConversationPlan): ResolvedChatFrameUiProfile {
-  const ui = (conversationPlan as ConversationPlan & { chat_ui?: ChatFrameUiProfile }).chat_ui ?? {};
+  const ui = (conversationPlan as ConversationPlan & { chat_ui?: ChatConversationUiProfile }).chat_ui ?? {};
   return {
     contactName: nonEmpty(ui.contact_name) ?? "蒲涛",
     contactStatus: nonEmpty(ui.contact_status) ?? "在线",
@@ -159,21 +162,34 @@ function latestVisibleMessage(messages: ConversationPlan["messages"]): Conversat
 }
 
 function renderMessageRows(messages: ConversationPlan["messages"], uiProfile: ResolvedChatFrameUiProfile): string {
-  const lastRightIndex = messages.reduce((lastIndex, message, index) => (message.side === "right" ? index : lastIndex), -1);
-  return messages.map((message, index) => renderMessageRow({ message, index, lastRightIndex, uiProfile })).join("\n");
+  const readReceiptIndex = readReceiptMessageIndex(messages);
+  return messages.map((message, index) => renderMessageRow({ message, index, readReceiptIndex, uiProfile })).join("\n");
 }
 
 function renderMessageRow(input: {
   message: ConversationPlan["messages"][number];
   index: number;
-  lastRightIndex: number;
+  readReceiptIndex: number;
   uiProfile: ResolvedChatFrameUiProfile;
 }): string {
   const side = input.message.side;
   const inlineTime = input.index === 2 ? `    <div class="time-marker inline" aria-hidden="true">刚刚</div>\n` : "";
   const avatarSrc = side === "left" ? input.uiProfile.leftAvatarSrc : input.uiProfile.rightAvatarSrc;
-  const readReceipt = side === "right" && input.index === input.lastRightIndex ? `<div class="read-receipt" aria-hidden="true"><span class="receipt-avatar"></span><span>已读</span></div>` : "";
+  const readReceipt = input.index === input.readReceiptIndex ? `<div class="read-receipt" aria-hidden="true"><span class="receipt-avatar"></span><span>已读</span></div>` : "";
   return `${inlineTime}    <div class="row ${side}"><div class="avatar-slot message-avatar avatar-${side}" data-avatar-role="${side}-speaker" aria-hidden="true">${avatarImg(avatarSrc)}</div><div class="bubble-stack"><div class="bubble" data-message-id="${escapeHtml(input.message.id)}">${escapeHtml(input.message.display_text)}</div>${readReceipt}</div></div>`;
+}
+
+function readReceiptMessageIndex(messages: ConversationPlan["messages"]): number {
+  let lastQuestionIndex = -1;
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    const message = messages[index]!;
+    if (message.side === "right" && message.speaker === "questioner") {
+      lastQuestionIndex = index;
+      break;
+    }
+  }
+  if (lastQuestionIndex === -1) return -1;
+  return messages.slice(lastQuestionIndex + 1).some((message) => message.side === "left") ? lastQuestionIndex : -1;
 }
 
 function headerAvatarHtml(uiProfile: ResolvedChatFrameUiProfile): string {

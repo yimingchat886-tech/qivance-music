@@ -22,13 +22,20 @@ test("builds local-only chat frame contracts and HTML", () => {
   assert.equal(validateChatFrameContracts({ conversationPlan, frameContracts }).ok, true);
   assert.equal(frameContracts.frames[0]?.html_path, "video/html-video/.html-video/projects/demo_project/frames/chat_dialogue_mv_001.html");
   assert.equal(frameContracts.frames.reduce((sum, frame) => sum + frame.duration_sec, 0), 4);
+  assert.deepEqual(frameContracts.frames.map((frame) => frame.message_ids), [[], ["msg_001"], ["msg_001", "msg_002"]]);
+  assert.deepEqual(frameContracts.frames.map((frame) => frame.duration_sec), [0.5, 1, 2.5]);
 
-  const html = renderChatFrameHtml({ frame: frameContracts.frames[0]!, conversationPlan });
+  const preLyricHtml = renderChatFrameHtml({ frame: frameContracts.frames[0]!, conversationPlan });
+  const preLyricValidation = validateChatFrameHtml(preLyricHtml);
+  assert.equal(preLyricValidation.ok, true, preLyricValidation.issues.join("\n"));
+  assert.doesNotMatch(preLyricHtml, /data-message-id=/);
+
+  const html = renderChatFrameHtml({ frame: frameContracts.frames.at(-1)!, conversationPlan });
   const validation = validateChatFrameHtml(html);
   assert.equal(validation.ok, true, validation.issues.join("\n"));
   assert.match(html, /hello world\?/);
-  assert.match(html, /<div class="name">蒲涛<\/div>/);
-  assert.doesNotMatch(html, /对方正在输入/);
+  assert.match(html, /<div class="name">对方正在输入\.\.\.\.<\/div>/);
+  assert.doesNotMatch(html, /<div class="name">蒲涛<\/div>/);
   assert.match(html, /data-douyin-chat-shell/);
   assert.doesNotMatch(html, /class="status-bar"|15:30|battery/);
   assert.match(html, /\.\.\/assets\/status_bar_icons\/back_arrow\.png/);
@@ -57,9 +64,9 @@ test("uses configurable contact profile and typing title for newly visible left 
     chat_ui: {
       contact_name: "林同学",
       contact_status: "在线",
-      contact_avatar_src: "../assets/avatars/contact.png",
-      left_avatar_src: "../assets/avatars/left.png",
-      right_avatar_src: "../assets/avatars/right.png",
+      contact_avatar_src: "../assets/avatars/1.jpg",
+      left_avatar_src: "../assets/avatars/1.jpg",
+      right_avatar_src: "../assets/avatars/2.jpg",
     },
   };
 
@@ -69,7 +76,7 @@ test("uses configurable contact profile and typing title for newly visible left 
       html_path: "video/html-video/.html-video/projects/demo_project/frames/custom_right_frame.html",
       duration_sec: 1,
       section_ids: ["sec_001"],
-      message_ids: ["msg_001", "msg_002"],
+      message_ids: ["msg_001"],
       text_policy: "verbatim_lyrics",
       forbidden_remote_resources: true,
     },
@@ -77,9 +84,9 @@ test("uses configurable contact profile and typing title for newly visible left 
   });
   assert.match(rightHtml, /<div class="name">林同学<\/div>/);
   assert.doesNotMatch(rightHtml, /对方正在输入/);
-  assert.match(rightHtml, /src="\.\.\/assets\/avatars\/contact\.png"/);
-  assert.match(rightHtml, /src="\.\.\/assets\/avatars\/left\.png"/);
-  assert.match(rightHtml, /src="\.\.\/assets\/avatars\/right\.png"/);
+  assert.match(rightHtml, /src="\.\.\/assets\/avatars\/1\.jpg"/);
+  assert.match(rightHtml, /src="\.\.\/assets\/avatars\/2\.jpg"/);
+  assert.equal(readReceiptCount(rightHtml), 0);
 
   const leftHtml = renderChatFrameHtml({
     frame: {
@@ -87,7 +94,7 @@ test("uses configurable contact profile and typing title for newly visible left 
       html_path: "video/html-video/.html-video/projects/demo_project/frames/custom_left_frame.html",
       duration_sec: 1,
       section_ids: ["sec_001"],
-      message_ids: ["msg_001"],
+      message_ids: ["msg_001", "msg_002"],
       text_policy: "verbatim_lyrics",
       forbidden_remote_resources: true,
     },
@@ -95,50 +102,79 @@ test("uses configurable contact profile and typing title for newly visible left 
   });
   assert.match(leftHtml, /<div class="name">对方正在输入\.\.\.\.<\/div>/);
   assert.doesNotMatch(leftHtml, /<div class="name">林同学<\/div>/);
-  assert.match(leftHtml, /data-message-id="msg_001"/);
+  assert.match(leftHtml, /data-message-id="msg_002"/);
+  assert.equal(readReceiptCount(leftHtml), 1);
 });
 
-test("renders inline time dynamically and writes status icon assets", async () => {
+test("renders read receipts by visible answer state and writes local assets", async () => {
   const conversationPlan = conversationFixture();
+  const rightQuestion2 = { ...conversationPlan.messages[0]!, id: "custom_right_1", display_text: "第二个问题?", raw_text: "第二个问题?", start_sec: 3.2, end_sec: 3.8 };
+  const leftAnswer2 = { ...conversationPlan.messages[1]!, id: "custom_left_1", display_text: "第二个答案", raw_text: "第二个答案", start_sec: 4.0, end_sec: 4.5 };
   const fourMessagePlan = {
     ...conversationPlan,
     messages: [
       conversationPlan.messages[0]!,
       conversationPlan.messages[1]!,
-      { ...conversationPlan.messages[0]!, id: "custom_left_1", display_text: "第三条", raw_text: "第三条", start_sec: 2.5, end_sec: 3 },
-      { ...conversationPlan.messages[1]!, id: "custom_right_1", display_text: "第四条", raw_text: "第四条", start_sec: 3.2, end_sec: 3.8 },
+      rightQuestion2,
+      leftAnswer2,
     ],
   };
-  const frame = {
-    frame_id: "custom_all_frame",
-    html_path: "video/html-video/.html-video/projects/demo_project/frames/custom_all_frame.html",
-    duration_sec: 1,
-    section_ids: ["sec_001"],
-    message_ids: fourMessagePlan.messages.map((message) => message.id),
-    text_policy: "verbatim_lyrics" as const,
-    forbidden_remote_resources: true as const,
-  };
+  const rightOnlyFrame = frameFixture(["msg_001"]);
+  const answeredFrame = frameFixture(["msg_001", "msg_002"]);
+  const rightLeftRightFrame = frameFixture(["msg_001", "msg_002", "custom_right_1"]);
+  const rightRightLeftFrame = frameFixture(["msg_001", "custom_right_1", "custom_left_1"]);
+  const allFrame = frameFixture(fourMessagePlan.messages.map((message) => message.id));
 
-  const html = renderChatFrameHtml({ frame, conversationPlan: fourMessagePlan });
+  const rightOnlyHtml = renderChatFrameHtml({ frame: rightOnlyFrame, conversationPlan: fourMessagePlan });
+  assert.equal(validateChatFrameHtml(rightOnlyHtml).ok, true);
+  assert.equal(readReceiptCount(rightOnlyHtml), 0);
+
+  const answeredHtml = renderChatFrameHtml({ frame: answeredFrame, conversationPlan: fourMessagePlan });
+  assert.equal(readReceiptCount(answeredHtml), 1);
+
+  const rightLeftRightHtml = renderChatFrameHtml({ frame: rightLeftRightFrame, conversationPlan: fourMessagePlan });
+  assert.equal(readReceiptCount(rightLeftRightHtml), 0);
+
+  const rightRightLeftHtml = renderChatFrameHtml({ frame: rightRightLeftFrame, conversationPlan: fourMessagePlan });
+  assert.equal(readReceiptCount(rightRightLeftHtml), 1);
+  assert.match(rightRightLeftHtml, /data-message-id="custom_right_1"/);
+
+  const html = renderChatFrameHtml({ frame: allFrame, conversationPlan: fourMessagePlan });
   assert.match(html, /class="time-marker inline"[^>]*>刚刚<\/div>/);
-  assert.match(html, /data-message-id="custom_right_1"/);
+  assert.match(html, /data-message-id="custom_left_1"/);
   assert.match(html, /<span>已读<\/span>/);
 
   const projectRoot = await mkdtemp(path.join(os.tmpdir(), "qivance-chat-frame-"));
   try {
-    await writeChatFrameHtml({ htmlPath: path.join(projectRoot, frame.html_path), frame, conversationPlan: fourMessagePlan });
+    await writeChatFrameHtml({ htmlPath: path.join(projectRoot, allFrame.html_path), frame: allFrame, conversationPlan: fourMessagePlan });
     await access(path.join(projectRoot, "video/html-video/.html-video/projects/demo_project/assets/status_bar_icons/back_arrow.png"));
     await access(path.join(projectRoot, "video/html-video/.html-video/projects/demo_project/assets/status_bar_icons/avatar_online.png"));
+    await access(path.join(projectRoot, "video/html-video/.html-video/projects/demo_project/assets/avatars/1.jpg"));
+    await access(path.join(projectRoot, "video/html-video/.html-video/projects/demo_project/assets/avatars/2.jpg"));
   } finally {
     await rm(projectRoot, { recursive: true, force: true });
   }
 });
 
+function frameFixture(messageIds: string[]) {
+  return {
+    frame_id: "custom_all_frame",
+    html_path: "video/html-video/.html-video/projects/demo_project/frames/custom_all_frame.html",
+    duration_sec: 1,
+    section_ids: ["sec_001"],
+    message_ids: messageIds,
+    text_policy: "verbatim_lyrics" as const,
+    forbidden_remote_resources: true as const,
+  };
+}
+
 test("rejects frame contracts that do not cover all messages", () => {
   const conversationPlan = conversationFixture();
   const animationPlan = buildChatAnimationPlan({ conversationPlan, durationSec: 4 });
   const frameContracts = buildChatFrameContracts({ projectId: "demo_project", conversationPlan, animationPlan });
-  frameContracts.frames[0]!.message_ids = ["msg_001"];
+  for (const frame of frameContracts.frames) {
+    frame.message_ids = frame.message_ids.filter((messageId) => messageId !== "msg_002");
+  }
 
   const validation = validateChatFrameContracts({ conversationPlan, frameContracts });
 
@@ -163,4 +199,8 @@ function conversationFixture() {
   });
   assert.ok(result.conversationPlan);
   return result.conversationPlan;
+}
+
+function readReceiptCount(html: string): number {
+  return html.match(/class="read-receipt"/g)?.length ?? 0;
 }

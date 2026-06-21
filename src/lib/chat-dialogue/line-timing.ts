@@ -69,7 +69,8 @@ function timingsFromExplicitLineIds(
   for (const line of lineMap.lines) {
     const lineWords = words.filter((word) => word.line_id === line.line_id);
     const expectedCount = normalizeWords(line.display_text).length;
-    const coverage = expectedCount === 0 ? 0 : Math.min(1, lineWords.length / expectedCount);
+    const actualCount = lineWords.flatMap((word) => normalizeWords(wordText(word))).length;
+    const coverage = expectedCount === 0 ? 0 : Math.min(1, actualCount / expectedCount);
     if (lineWords.length === 0 || coverage < minCoverage) {
       issues.push(`${line.line_id} coverage ${coverage.toFixed(2)} is below ${minCoverage}`);
       continue;
@@ -88,6 +89,7 @@ function timingsFromWordSequence(
   const issues: string[] = [];
   const timings: LineTiming[] = [];
   let cursor = 0;
+  const wordTokens = words.flatMap((word) => normalizeWords(wordText(word)).map((token) => ({ token, word })));
   for (const line of lineMap.lines) {
     const expectedWords = normalizeWords(line.display_text);
     if (expectedWords.length === 0) {
@@ -96,9 +98,9 @@ function timingsFromWordSequence(
     }
     const matched: WordTiming[] = [];
     for (const expected of expectedWords) {
-      const nextIndex = words.findIndex((word, index) => index >= cursor && normalizeWord(wordText(word)) === expected);
+      const nextIndex = wordTokens.findIndex((wordToken, index) => index >= cursor && wordToken.token === expected);
       if (nextIndex === -1) continue;
-      matched.push(words[nextIndex]!);
+      matched.push(wordTokens[nextIndex]!.word);
       cursor = nextIndex + 1;
     }
     const coverage = matched.length / expectedWords.length;
@@ -156,7 +158,7 @@ function sectionForTime(sectionMap: SectionMapLike, startSec: number): SectionMa
 }
 
 function normalizeWords(text: string): string[] {
-  return text.split(/\s+/).map(normalizeWord).filter(Boolean);
+  return text.match(/[A-Za-z0-9]+|\p{Script=Han}/gu)?.map(normalizeWord).filter(Boolean) ?? [];
 }
 
 function wordText(word: WordTiming): string {
