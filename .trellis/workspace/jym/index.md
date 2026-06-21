@@ -8,8 +8,8 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 5
-- **Last Active**: 2026-06-19
+- **Total Sessions**: 6
+- **Last Active**: 2026-06-21
 <!-- @@@/auto:current-status -->
 
 ---
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~185 | Active |
+| `journal-1.md` | ~218 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 6 | 2026-06-21 | chat_dialogue_mv 2test production validation | `787a7bf` | `codex/planv5-track-trellis-files` |
 | 5 | 2026-06-19 | Codex Trellis Ponytail standard | - | `codex/planv5-track-trellis-files` |
 | 4 | 2026-06-18 | V6 video_chain product entry | `2b7403a`, `b2b298f`, `6ba5334` | `codex/planv5-track-trellis-files` |
 | 3 | 2026-06-17 | V5 V6 unified stabilization | `aab82fb` | `codex/planv5-track-trellis-files` |

@@ -183,3 +183,36 @@ Fixed active Codex Ponytail install, wired Ponytail review into Trellis check, a
 ### Next Steps
 
 - None - task complete
+
+
+## Session 6: chat_dialogue_mv 2test production validation
+
+**Date**: 2026-06-21
+**Task**: chat_dialogue_mv 2test production validation
+**Branch**: `codex/planv5-track-trellis-files`
+
+### Summary
+
+Completed and committed the chat_dialogue_mv 2test real-asset production run fix, verified focused tests/typecheck/diff checks, archived the Trellis task.
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `787a7bf` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
