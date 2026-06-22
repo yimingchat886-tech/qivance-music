@@ -315,3 +315,36 @@ Fixed chat runtime capture to seek each frame so bubbles render, moved chat icon
 ### Next Steps
 
 - None - task complete
+
+
+## Session 10: Smooth chat dialogue track scrolling
+
+**Date**: 2026-06-22
+**Task**: Smooth chat dialogue track scrolling
+**Branch**: `main`
+
+### Summary
+
+Implemented Oracle-reviewed whole-track chat scrolling: removed safety notices, moved runtime to fixed viewport plus translated chat track, unified seek/play state, preserved deterministic 60fps capture, and updated tests/spec.
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `bfb25a0` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete

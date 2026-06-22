@@ -8,7 +8,7 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 9
+- **Total Sessions**: 10
 - **Last Active**: 2026-06-22
 <!-- @@@/auto:current-status -->
 
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~317 | Active |
+| `journal-1.md` | ~350 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 10 | 2026-06-22 | Smooth chat dialogue track scrolling | `bfb25a0` | `main` |
 | 9 | 2026-06-22 | Fix chat dialogue bubbles and shared assets | `3710554` | `main` |
 | 8 | 2026-06-22 | Chat UI profile artifact | `d800a31` | `main` |
 | 7 | 2026-06-22 | Browser recording renderer mainline | `2795ad9` | `codex/planv5-track-trellis-files` |
