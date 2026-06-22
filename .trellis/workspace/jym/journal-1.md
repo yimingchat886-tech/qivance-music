@@ -216,3 +216,36 @@ Completed and committed the chat_dialogue_mv 2test real-asset production run fix
 ### Next Steps
 
 - None - task complete
+
+
+## Session 7: Browser recording renderer mainline
+
+**Date**: 2026-06-22
+**Task**: Browser recording renderer mainline
+**Branch**: `codex/planv5-track-trellis-files`
+
+### Summary
+
+Implemented browser-recording chat_dialogue_mv renderer as the production mainline and archived the Trellis task.
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `2795ad9` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
