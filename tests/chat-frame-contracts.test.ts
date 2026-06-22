@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { access, mkdtemp, rm } from "node:fs/promises";
+import { access, lstat, mkdtemp, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -184,6 +184,9 @@ test("renders read receipts by visible answer state and writes local assets", as
     await access(path.join(projectRoot, "video/html-video/.html-video/projects/demo_project/assets/status_bar_icons/avatar_online.png"));
     await access(path.join(projectRoot, "video/html-video/.html-video/projects/demo_project/assets/avatars/1.jpg"));
     await access(path.join(projectRoot, "video/html-video/.html-video/projects/demo_project/assets/avatars/2.jpg"));
+    await access(path.join(projectRoot, "video/html-video/.html-video/projects/demo_project/assets/avatars/C.svg"));
+    assert.equal((await lstat(path.join(projectRoot, "video/html-video/.html-video/projects/demo_project/assets/status_bar_icons/back_arrow.png"))).isSymbolicLink(), true);
+    assert.equal((await lstat(path.join(projectRoot, "video/html-video/.html-video/projects/demo_project/assets/avatars/C.svg"))).isSymbolicLink(), true);
   } finally {
     await rm(projectRoot, { recursive: true, force: true });
   }

@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { access, mkdtemp, readFile } from "node:fs/promises";
+import { access, lstat, mkdtemp, readFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -28,6 +28,7 @@ test("renders local-only runtime chat HTML with timeline controller", () => {
   assert.match(html, /@keyframes receiptOut/);
   assert.match(html, /window\.__qivanceChatRuntime/);
   assert.match(html, /function playTimeline/);
+  assert.match(html, /function seekTimeline/);
   assert.match(html, /function enterMessage/);
   assert.match(html, /animationend/);
   assert.match(html, /classList/);
@@ -49,6 +50,11 @@ test("writes runtime HTML under the project runtime directory", async () => {
   await access(path.join(tmp, "video/html-video/.html-video/projects/project_001/assets/status_bar_icons/video_camera.png"));
   await access(path.join(tmp, "video/html-video/.html-video/projects/project_001/assets/avatars/1.jpg"));
   await access(path.join(tmp, "video/html-video/.html-video/projects/project_001/assets/avatars/2.jpg"));
+  await access(path.join(tmp, "video/html-video/.html-video/projects/project_001/assets/avatars/A.jpg"));
+  await access(path.join(tmp, "video/html-video/.html-video/projects/project_001/assets/avatars/B.jpg"));
+  await access(path.join(tmp, "video/html-video/.html-video/projects/project_001/assets/avatars/C.svg"));
+  assert.equal((await lstat(path.join(tmp, "video/html-video/.html-video/projects/project_001/assets/status_bar_icons/back_arrow.png"))).isSymbolicLink(), true);
+  assert.equal((await lstat(path.join(tmp, "video/html-video/.html-video/projects/project_001/assets/avatars/A.jpg"))).isSymbolicLink(), true);
 });
 
 function conversationFixture(): ConversationPlan {

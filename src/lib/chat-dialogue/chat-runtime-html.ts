@@ -1,5 +1,6 @@
-import { copyFile, mkdir, writeFile } from "node:fs/promises";
+import { mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
+import { stageChatUiAssets } from "./chat-assets.ts";
 import type { ChatAnimationPlan } from "./chat-animation-plan.ts";
 import type { ConversationPlan } from "./conversation-plan.ts";
 import type { ChatRuntimeTimeline } from "./chat-runtime-timeline.ts";
@@ -194,6 +195,28 @@ ${input.conversationPlan.messages.map((message) => messageRowHtml(message, uiPro
     document.getElementById("chatHeader").classList.toggle("is-typing", isTyping);
   }
 
+  function seekTimeline(timeSec) {
+    const events = timeline.events.filter((event) => event.type === "message");
+    const hiddenReceipts = new Set(events
+      .filter((event) => event.hide_receipt_message_id && timeSec >= event.at_sec)
+      .map((event) => event.hide_receipt_message_id));
+    setTypingStatus(events.some((event) => event.side === "left" && timeSec >= event.at_sec && timeSec < event.at_sec + 0.4));
+    for (const event of events) {
+      const row = getRow(event.message_id);
+      row.classList.remove("entering", "entered", "read-in", "read-on", "read-out");
+      if (timeSec < event.at_sec) {
+        row.classList.add("is-hidden");
+        continue;
+      }
+      row.classList.remove("is-hidden");
+      row.classList.add("entered");
+      if (event.show_receipt_after_enter && !hiddenReceipts.has(event.message_id)) {
+        const receiptAtSec = event.at_sec + ((event.side === "right" ? timeline.css_motion.right_bubble_ms : timeline.css_motion.left_bubble_ms) + 40 + timeline.css_motion.receipt_in_ms) / 1000;
+        if (timeSec >= receiptAtSec) row.classList.add("read-on");
+      }
+    }
+  }
+
   async function playRightMessage(event) {
     const row = getRow(event.message_id);
     await enterMessage(row);
@@ -230,6 +253,7 @@ ${input.conversationPlan.messages.map((message) => messageRowHtml(message, uiPro
   window.__qivanceChatRuntime = {
     ready,
     play: playTimeline,
+    seek: seekTimeline,
     stop() { stopped = true; },
     getState() { return { started, stopped, playbackDone: document.body.dataset.playbackDone === "true" }; },
     durationMs: Math.ceil(timeline.duration_sec * 1000),
@@ -249,23 +273,9 @@ export async function writeChatRuntimeHtml(input: {
   const projectDir = path.join(input.projectRoot, `video/html-video/.html-video/projects/${input.projectId}`);
   const htmlPath = path.join(input.projectRoot, relativePath);
   await mkdir(path.dirname(htmlPath), { recursive: true });
-  await writeRuntimeAssets(projectDir);
+  await stageChatUiAssets(projectDir);
   await writeFile(htmlPath, input.html, "utf8");
   return { path: relativePath };
-}
-
-async function writeRuntimeAssets(projectDir: string): Promise<void> {
-  const statusIconDir = path.join(projectDir, "assets/status_bar_icons");
-  const avatarDir = path.join(projectDir, "assets/avatars");
-  await Promise.all([
-    mkdir(statusIconDir, { recursive: true }),
-    mkdir(avatarDir, { recursive: true }),
-  ]);
-  await Promise.all([
-    ...STATUS_ICON_FILES.map((fileName) => copyFile(new URL(`./assets/status_bar_icons/${fileName}`, import.meta.url), path.join(statusIconDir, fileName))),
-    copyFile(new URL("./assets/default_avatars/1.jpg", import.meta.url), path.join(avatarDir, "1.jpg")),
-    copyFile(new URL("./assets/default_avatars/2.jpg", import.meta.url), path.join(avatarDir, "2.jpg")),
-  ]);
 }
 
 export function validateChatRuntimeHtml(html: string): { ok: boolean; issues: string[] } {
@@ -280,12 +290,12 @@ export function validateChatRuntimeHtml(html: string): { ok: boolean; issues: st
   for (const token of ["bubbleFloatPop", "avatarSoftIn", "receiptIn", "receiptOut"]) {
     if (!html.includes(token)) issues.push(`chat runtime html must include ${token}`);
   }
-  for (const token of ["playTimeline", "enterMessage", "animationend", "classList"]) {
+  for (const token of ["playTimeline", "seekTimeline", "enterMessage", "animationend", "classList"]) {
     if (!html.includes(token)) issues.push(`chat runtime html script must include ${token}`);
   }
   if (!/overflow-wrap:\s*anywhere/.test(html)) issues.push("chat runtime html must include long-text wrapping");
   if (/read-out[\s\S]{0,200}display\s*:\s*none/i.test(html)) issues.push("chat runtime html must not hide receipt read-out with display:none");
-  if (/class="row right/.test(html) && (!/class="receipt-avatar avatar-slot"/.test(html) || !/src="\.\.\/assets\/avatars\/1\.jpg"/.test(html))) {
+  if (/class="row right/.test(html) && (!/class="receipt-avatar avatar-slot"/.test(html) || !/src="\.\.\/assets\/avatars\//.test(html))) {
     issues.push("chat runtime html receipt avatar must use the contact avatar");
   }
   if (!/data-avatar-role="contact"/.test(html)) issues.push("chat runtime html must expose a contact avatar role");

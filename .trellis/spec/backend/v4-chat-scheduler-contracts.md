@@ -31,13 +31,15 @@
 - Optional chat UI profile input stays at `data/chains/chat_dialogue_mv/chat_ui_profile.json` and may set local-only `contact_name`, `contact_status`, `contact_avatar_src`, `left_avatar_src`, and `right_avatar_src` before `conversation_plan.json` is written.
 - Chain exports stay under `exports/chat_dialogue_mv/**`.
 - Runtime chat HTML stays under `video/html-video/.html-video/projects/<project_id>/runtime/chat_dialogue_mv.html`.
-- Runtime chat HTML generation must copy every referenced packaged local asset under `video/html-video/.html-video/projects/<project_id>/assets/**`; broken local images are a render bug, not an acceptable fallback.
+- Runtime chat HTML generation must symlink every referenced packaged standard asset under `video/html-video/.html-video/projects/<project_id>/assets/**`; broken local images or copied packaged defaults are render bugs, not acceptable fallbacks.
 - Production visual rendering uses browser recording:
   - `runtime_timeline.json` is the source of truth for browser playback state.
-  - JS schedules absolute `at_sec` events from `runtime_timeline.json` and toggles classes only.
+  - Runtime JS exposes both normal `play()` playback and deterministic `seek(timeSec)` state rendering from `runtime_timeline.json`.
+  - Browser recording captures by seeking each 60fps timestamp before taking a screenshot, rather than relying on Chrome virtual-time timers.
   - CSS owns bubble pop, read receipt, avatar, and header typing motion using `transform`, `opacity`, and `visibility`.
   - Browser recording captures the runtime page at 60fps and writes `exports/chat_dialogue_mv/visual.mp4`.
   - Browser recording must fail with a bounded error if CDP virtual-time frame advancement or screenshot capture stalls; it must not leave a task waiting indefinitely without growing frame output.
+  - Browser recording must fail if a timeline with message rows completes capture with no visible message rows.
   - `browser_render_evidence.json` records fps, frame count, runtime HTML path, output path, and visual sha.
 - Static chat HTML frames stay under `video/html-video/.html-video/projects/<project_id>/frames/**` only when fallback/debug mode is explicitly enabled.
 - `frame_contracts.json` is fallback/debug static screenshot UI state only:

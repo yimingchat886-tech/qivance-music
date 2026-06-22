@@ -181,7 +181,7 @@ function fakeMediaDeps(): V5TaskHandlerDeps {
         duration_sec: input.runtimeTimeline.duration_sec,
         frame_count: Math.ceil(input.runtimeTimeline.duration_sec * input.runtimeTimeline.fps),
         visual_sha256: "visual-sha",
-        capture_strategy: "cdp_virtual_time_screenshots",
+        capture_strategy: "cdp_seek_screenshots",
         chrome_executable: "mock-chrome",
       };
       await writeJson(path.join(input.projectRoot, "data/chains/chat_dialogue_mv/browser_render_evidence.json"), evidence);

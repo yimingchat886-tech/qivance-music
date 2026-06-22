@@ -1,5 +1,6 @@
 import { readFile } from "node:fs/promises";
 import path from "node:path";
+import { CHAT_STANDARD_UI_PROFILES, type ChatStandardProfileKey } from "./chat-assets.ts";
 import { writeJson } from "../fs-utils.ts";
 import type { LineTiming, LyricWordTiming, SectionMapLike } from "./line-timing.ts";
 import { buildLineTimings } from "./line-timing.ts";
@@ -7,6 +8,7 @@ import type { LyricsLineMap } from "./lyrics-line-map.ts";
 import type { SpeakerAttribution } from "./speaker-attribution.ts";
 
 export type ChatConversationUiProfile = {
+  standard_profile?: ChatStandardProfileKey;
   contact_name?: string;
   contact_status?: string;
   contact_avatar_src?: string;
@@ -118,12 +120,11 @@ export async function withProjectChatAvatarUi(input: {
   conversationPlan: ConversationPlan;
 }): Promise<ConversationPlan> {
   const projectProfile = await readProjectChatUiProfile(input.projectRoot);
+  const standardProfileKey = projectProfile.standard_profile ?? input.conversationPlan.chat_ui?.standard_profile ?? "A";
   return {
     ...input.conversationPlan,
     chat_ui: {
-      contact_avatar_src: "../assets/avatars/1.jpg",
-      left_avatar_src: "../assets/avatars/1.jpg",
-      right_avatar_src: "../assets/avatars/2.jpg",
+      ...CHAT_STANDARD_UI_PROFILES[standardProfileKey],
       ...input.conversationPlan.chat_ui,
       ...projectProfile,
     },
@@ -143,16 +144,25 @@ function normalizeChatUiProfile(value: unknown): ChatConversationUiProfile {
   if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("chat_ui_profile.json must be an object.");
   const input = value as Record<keyof ChatConversationUiProfile, unknown>;
   const profile: ChatConversationUiProfile = {};
-  for (const key of ["contact_name", "contact_status", "contact_avatar_src", "left_avatar_src", "right_avatar_src"] as const) {
+  for (const key of ["standard_profile", "contact_name", "contact_status", "contact_avatar_src", "left_avatar_src", "right_avatar_src"] as const) {
     const field = input[key];
     if (field === undefined) continue;
     if (typeof field !== "string") throw new Error(`chat_ui_profile.json ${key} must be a string.`);
     const trimmed = nonEmpty(field);
     if (!trimmed) continue;
+    if (key === "standard_profile") {
+      if (!isStandardProfileKey(trimmed)) throw new Error("chat_ui_profile.json standard_profile must be A, B, or C.");
+      profile[key] = trimmed;
+      continue;
+    }
     if (key.endsWith("_avatar_src") && /^https?:\/\//i.test(trimmed)) throw new Error(`chat_ui_profile.json ${key} must be local.`);
     profile[key] = trimmed;
   }
   return profile;
+}
+
+function isStandardProfileKey(value: string): value is ChatStandardProfileKey {
+  return value === "A" || value === "B" || value === "C";
 }
 
 function nonEmpty(value: string): string | undefined {

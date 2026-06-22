@@ -88,7 +88,7 @@ test("writes browser render evidence after mocked capture and ffmpeg", async () 
   assert.equal(ffmpegArgs.includes("fps=60,format=yuv420p"), true);
   assert.equal(evidence.frame_count, 90);
   assert.equal(evidence.visual_sha256, "visual-sha");
-  assert.equal(evidence.capture_strategy, "cdp_virtual_time_screenshots");
+  assert.equal(evidence.capture_strategy, "cdp_seek_screenshots");
 
   const evidenceJson = JSON.parse(await readFile(path.join(projectRoot, "data/chains/chat_dialogue_mv/browser_render_evidence.json"), "utf8"));
   assert.equal(evidenceJson.runtime_html_path, "runtime.html");
@@ -103,7 +103,7 @@ test("fails fast when a browser recorder wait stalls", async () => {
   );
 });
 
-test("unpauses virtual time before capturing a runtime screenshot", async () => {
+test("captures a runtime screenshot without mutating virtual time policy", async () => {
   const calls: Array<{ method: string; params?: Record<string, unknown> }> = [];
   const screenshot = await captureScreenshotWithUnpausedVirtualTime({
     async send<T>(method: string, params?: Record<string, unknown>): Promise<T> {
@@ -115,7 +115,6 @@ test("unpauses virtual time before capturing a runtime screenshot", async () => 
 
   assert.equal(screenshot.data, "png-data");
   assert.deepEqual(calls, [
-    { method: "Emulation.setVirtualTimePolicy", params: { policy: "pauseIfNetworkFetchesPending" } },
     { method: "Page.captureScreenshot", params: { format: "png", fromSurface: true } },
   ]);
 });

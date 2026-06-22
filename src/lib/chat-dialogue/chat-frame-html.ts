@@ -1,5 +1,6 @@
-import { copyFile, mkdir, writeFile } from "node:fs/promises";
+import { mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
+import { stageChatUiAssets } from "./chat-assets.ts";
 import type { ChatFrameContract, ChatFrameHeaderUiState, ChatFrameReadReceiptUiState, ChatFrameUiState } from "./chat-frame-contracts.ts";
 import type { ChatConversationUiProfile, ConversationPlan } from "./conversation-plan.ts";
 
@@ -176,8 +177,7 @@ export async function writeChatFrameHtml(input: {
 }): Promise<void> {
   await mkdir(path.dirname(input.htmlPath), { recursive: true });
   await writeFile(input.htmlPath, renderChatFrameHtml(input), "utf8");
-  await writeStatusBarIconAssets(path.dirname(input.htmlPath));
-  await writeChatAvatarAssets({ htmlPath: input.htmlPath });
+  await stageChatUiAssets(path.resolve(path.dirname(input.htmlPath), ".."));
 }
 
 export function validateChatFrameHtml(html: string): { ok: boolean; issues: string[] } {
@@ -207,23 +207,6 @@ export function validateChatFrameHtml(html: string): { ok: boolean; issues: stri
   if (/class="row (?:left|right)(?: [^"]*)?"/.test(html) && !/class="avatar-slot message-avatar /.test(html)) issues.push("chat frame html must include replaceable message avatar slots");
   if (/letter-spacing:\s*-/.test(html)) issues.push("chat frame html must not use negative letter spacing");
   return { ok: issues.length === 0, issues };
-}
-
-async function writeStatusBarIconAssets(frameDir: string): Promise<void> {
-  const outputDir = path.resolve(frameDir, "../assets/status_bar_icons");
-  await mkdir(outputDir, { recursive: true });
-  await Promise.all(STATUS_ICON_FILES.map((fileName) => copyFile(new URL(`./assets/status_bar_icons/${fileName}`, import.meta.url), path.join(outputDir, fileName))));
-}
-
-async function writeChatAvatarAssets(input: {
-  htmlPath: string;
-}): Promise<void> {
-  const outputDir = path.resolve(path.dirname(input.htmlPath), "../assets/avatars");
-  await mkdir(outputDir, { recursive: true });
-  await Promise.all([
-    copyFile(new URL("./assets/default_avatars/1.jpg", import.meta.url), path.join(outputDir, "1.jpg")),
-    copyFile(new URL("./assets/default_avatars/2.jpg", import.meta.url), path.join(outputDir, "2.jpg")),
-  ]);
 }
 
 function chatFrameUiProfile(conversationPlan: ConversationPlan): ResolvedChatFrameUiProfile {

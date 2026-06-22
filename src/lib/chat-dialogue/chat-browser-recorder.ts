@@ -11,7 +11,6 @@ import type { ChatRuntimeTimeline } from "./chat-runtime-timeline.ts";
 const execFileAsync = promisify(execFileCallback);
 const BROWSER_RENDER_EVIDENCE_PATH = "data/chains/chat_dialogue_mv/browser_render_evidence.json";
 const CDP_COMMAND_TIMEOUT_MS = 5000;
-const VIRTUAL_TIME_ADVANCE_TIMEOUT_MS = 5000;
 
 export type RenderChatRuntimeToVisualInput = {
   projectRoot: string;
@@ -38,7 +37,7 @@ export type ChatBrowserRenderEvidence = {
   duration_sec: number;
   frame_count: number;
   visual_sha256: string;
-  capture_strategy: "cdp_virtual_time_screenshots";
+  capture_strategy: "cdp_seek_screenshots";
   chrome_executable: string;
 };
 
@@ -103,7 +102,7 @@ export async function renderChatRuntimeToVisual(
     duration_sec: input.runtimeTimeline.duration_sec,
     frame_count: frameCount,
     visual_sha256: await (deps.sha256File ?? sha256File)(outputAbsolutePath),
-    capture_strategy: "cdp_virtual_time_screenshots",
+    capture_strategy: "cdp_seek_screenshots",
     chrome_executable: chromeExecutable,
   };
   await writeJson(path.join(input.projectRoot, BROWSER_RENDER_EVIDENCE_PATH), evidence);
@@ -181,24 +180,15 @@ async function captureRuntimeScreenshots(input: CaptureRuntimeScreenshotsInput):
       expression: "window.__qivanceChatRuntime.ready",
       awaitPromise: true,
     });
-    await cdp.send("Emulation.setVirtualTimePolicy", { policy: "pause" });
-    await cdp.send("Runtime.evaluate", {
-      expression: "window.__qivanceChatRuntime.play()",
-      awaitPromise: false,
-    });
     for (let index = 0; index < input.frameCount; index += 1) {
-      if (index > 0) {
-        const expired = cdp.waitForEvent("Emulation.virtualTimeBudgetExpired");
-        await cdp.send("Emulation.setVirtualTimePolicy", { policy: "advance", budget: 1000 / input.fps });
-        await withTimeout(
-          expired,
-          VIRTUAL_TIME_ADVANCE_TIMEOUT_MS,
-          `chat_browser_recording_stalled: virtual time did not advance at frame ${index + 1}/${input.frameCount}`,
-        );
-      }
+      await cdp.send("Runtime.evaluate", {
+        expression: `window.__qivanceChatRuntime.seek(${index / input.fps})`,
+        awaitPromise: false,
+      });
       const screenshot = await captureScreenshotWithUnpausedVirtualTime(cdp);
       await writeFile(path.join(input.renderRoot, `frame_${String(index + 1).padStart(6, "0")}.png`), screenshot.data, "base64");
     }
+    await assertRuntimeMessagesVisible(cdp);
     return { chromeExecutable: input.chromeExecutable };
   } finally {
     cdp?.close();
@@ -211,8 +201,21 @@ type CdpCommandSender = {
 };
 
 export async function captureScreenshotWithUnpausedVirtualTime(cdp: CdpCommandSender): Promise<{ data: string }> {
-  await cdp.send("Emulation.setVirtualTimePolicy", { policy: "pauseIfNetworkFetchesPending" });
   return cdp.send<{ data: string }>("Page.captureScreenshot", { format: "png", fromSurface: true });
+}
+
+async function assertRuntimeMessagesVisible(cdp: CdpCommandSender): Promise<void> {
+  const result = await cdp.send<{ result?: { value?: string } }>("Runtime.evaluate", {
+    expression: `JSON.stringify({
+      total: document.querySelectorAll("[data-message-id]").length,
+      visible: document.querySelectorAll(".row:not(.is-hidden)").length
+    })`,
+    returnByValue: true,
+  });
+  const value = JSON.parse(result.result?.value ?? "{}") as { total?: number; visible?: number };
+  if ((value.total ?? 0) > 0 && (value.visible ?? 0) === 0) {
+    throw new Error("chat_browser_recording_empty: runtime playback captured no visible message rows");
+  }
 }
 
 function resolveProjectPath(projectRoot: string, filePath: string): string {
@@ -297,7 +300,6 @@ type WebSocketConstructor = new (url: string) => WebSocketLike;
 class CdpSession {
   private id = 1;
   private pending = new Map<number, { resolve: (value: unknown) => void; reject: (error: Error) => void }>();
-  private events = new Map<string, Array<(params: unknown) => void>>();
   private readonly socket: WebSocketLike;
 
   private constructor(socket: WebSocketLike) {
@@ -337,14 +339,6 @@ class CdpSession {
     });
   }
 
-  waitForEvent(method: string): Promise<unknown> {
-    return new Promise((resolve) => {
-      const listeners = this.events.get(method) ?? [];
-      listeners.push(resolve);
-      this.events.set(method, listeners);
-    });
-  }
-
   close(): void {
     this.socket.close();
   }
@@ -365,10 +359,6 @@ class CdpSession {
       else pending.resolve(message.result ?? {});
       return;
     }
-    if (!message.method) return;
-    const listeners = this.events.get(message.method) ?? [];
-    this.events.delete(message.method);
-    for (const listener of listeners) listener(message.params);
   }
 
   private rejectAll(error: Error): void {

@@ -3,6 +3,7 @@ import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
+import { CHAT_STANDARD_UI_PROFILES } from "../src/lib/chat-dialogue/chat-assets.ts";
 import { CHAT_UI_PROFILE_PATH, buildConversationPlan, validateConversationPlan, withProjectChatAvatarUi } from "../src/lib/chat-dialogue/conversation-plan.ts";
 import { buildLineTimings } from "../src/lib/chat-dialogue/line-timing.ts";
 import { buildLyricsLineMap } from "../src/lib/chat-dialogue/lyrics-line-map.ts";
@@ -51,15 +52,36 @@ test("blocks production plan without timing evidence", () => {
   assert.match(result.issues.join("\n"), /lyric_word_timing is required/);
 });
 
-test("injects packaged default avatar profile without requiring project jpgs", async () => {
+test("injects standard A avatar profile without requiring project jpgs", async () => {
   const avatarPlan = await withProjectChatAvatarUi({
     projectRoot: "/tmp/project-without-avatars",
     conversationPlan: conversationPlanFixture(),
   });
 
-  assert.equal(avatarPlan.chat_ui?.contact_avatar_src, "../assets/avatars/1.jpg");
-  assert.equal(avatarPlan.chat_ui?.left_avatar_src, "../assets/avatars/1.jpg");
-  assert.equal(avatarPlan.chat_ui?.right_avatar_src, "../assets/avatars/2.jpg");
+  assert.deepEqual(Object.keys(CHAT_STANDARD_UI_PROFILES), ["A", "B", "C"]);
+  assert.equal(avatarPlan.chat_ui?.standard_profile, "A");
+  assert.equal(avatarPlan.chat_ui?.contact_name, "蒲涛");
+  assert.equal(avatarPlan.chat_ui?.contact_avatar_src, "../assets/avatars/A.jpg");
+  assert.equal(avatarPlan.chat_ui?.left_avatar_src, "../assets/avatars/A.jpg");
+  assert.equal(avatarPlan.chat_ui?.right_avatar_src, "../assets/avatars/B.jpg");
+});
+
+test("selects standard B/C profile before explicit project overrides", async () => {
+  const projectRoot = await mkdtemp(path.join(tmpdir(), "qivance-chat-ui-"));
+  await writeProfile(projectRoot, {
+    standard_profile: "C",
+    contact_name: "自定义联系人",
+  });
+
+  const avatarPlan = await withProjectChatAvatarUi({
+    projectRoot,
+    conversationPlan: conversationPlanFixture(),
+  });
+
+  assert.equal(avatarPlan.chat_ui?.standard_profile, "C");
+  assert.equal(avatarPlan.chat_ui?.contact_name, "自定义联系人");
+  assert.equal(avatarPlan.chat_ui?.contact_avatar_src, "../assets/avatars/C.svg");
+  assert.equal(avatarPlan.chat_ui?.right_avatar_src, "../assets/avatars/A.jpg");
 });
 
 test("merges project chat ui profile into the single header contact profile", async () => {
@@ -96,6 +118,21 @@ test("rejects remote project chat avatar profile paths", async () => {
       conversationPlan: conversationPlanFixture(),
     }),
     /contact_avatar_src must be local/,
+  );
+});
+
+test("rejects unknown standard chat ui profile keys", async () => {
+  const projectRoot = await mkdtemp(path.join(tmpdir(), "qivance-chat-ui-"));
+  await writeProfile(projectRoot, {
+    standard_profile: "D",
+  });
+
+  await assert.rejects(
+    withProjectChatAvatarUi({
+      projectRoot,
+      conversationPlan: conversationPlanFixture(),
+    }),
+    /standard_profile must be A, B, or C/,
   );
 });
 
