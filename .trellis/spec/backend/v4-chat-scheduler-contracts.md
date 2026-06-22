@@ -37,8 +37,7 @@
   - Runtime JS exposes both normal `play()` playback and deterministic `seek(timeSec)` state rendering from `runtime_timeline.json`; both paths must share the same time-based state function so screenshots and live playback cannot drift.
   - The fixed header/status area stays in place; the chat message area uses a clipped viewport plus a single movable chat track translated with `transform` so the whole conversation slides upward smoothly.
   - Browser recording captures by seeking each 60fps timestamp before taking a screenshot, rather than relying on Chrome virtual-time timers.
-  - CSS owns bubble pop, avatar, and header typing motion using `transform`, `opacity`, and `visibility`.
-  - Production runtime chat HTML does not render visible right-side `已读` receipts or receipt avatars; message spacing is controlled by normal row gap only.
+  - CSS owns bubble pop, read receipt, avatar, and header typing motion using `transform`, `opacity`, and `visibility`.
   - Browser recording captures the runtime page at 60fps and writes `exports/chat_dialogue_mv/visual.mp4`.
   - Browser recording must fail with a bounded error if CDP virtual-time frame advancement or screenshot capture stalls; it must not leave a task waiting indefinitely without growing frame output.
   - Browser recording must fail if a timeline with message rows completes capture with no visible message rows.
