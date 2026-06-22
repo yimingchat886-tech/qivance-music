@@ -24,8 +24,10 @@ test("renders local-only runtime chat HTML with timeline controller", () => {
   assert.match(html, /class="typing-name">对方正在输入\.\.\.\.<\/span>/);
   assert.match(html, /@keyframes bubbleFloatPop/);
   assert.match(html, /@keyframes avatarSoftIn/);
-  assert.match(html, /@keyframes receiptIn/);
-  assert.match(html, /@keyframes receiptOut/);
+  assert.match(html, /\.row\.right\.entering \.bubble \{ --bubble-in: var\(--right-bubble-in\); transform-origin: center bottom; \}/);
+  assert.match(html, /\.row\.left\.entering \.bubble \{ --bubble-in: var\(--left-bubble-in\); transform-origin: center bottom; \}/);
+  assert.match(html, /0% \{ opacity: 0; transform: translate3d\(0, 18px, 0\) scale\(\.965\); \}/);
+  assert.match(html, /56% \{ opacity: 1; transform: translate3d\(0, -2px, 0\) scale\(1\.018\); \}/);
   assert.match(html, /window\.__qivanceChatRuntime/);
   assert.match(html, /function playTimeline/);
   assert.match(html, /function seekTimeline/);
@@ -39,11 +41,13 @@ test("renders local-only runtime chat HTML with timeline controller", () => {
   assert.match(html, /chatTrack\.style\.transform = "translate3d/);
   assert.match(html, /classList/);
   assert.match(html, /overflow-wrap:\s*anywhere/);
-  assert.match(html, /class="receipt-avatar avatar-slot"><img class="avatar-img" src="\.\.\/assets\/avatars\/1\.jpg"/);
+  assert.doesNotMatch(html, /已读/);
+  assert.doesNotMatch(html, /read-receipt/);
+  assert.doesNotMatch(html, /receipt-avatar/);
+  assert.doesNotMatch(html, /receiptIn|receiptOut/);
   assert.doesNotMatch(html, /safety-notice|为保障用户沟通安全|为保证用户安全/);
   assert.doesNotMatch(html, /https?:\/\//);
   assert.doesNotMatch(html, /@import/);
-  assert.doesNotMatch(html, /read-out[\s\S]{0,200}display\s*:\s*none/i);
 });
 
 test("writes runtime HTML under the project runtime directory", async () => {

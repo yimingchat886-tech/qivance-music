@@ -38,8 +38,6 @@ export function renderChatRuntimeHtml(input: {
 :root {
   --right-bubble-in: ${input.runtimeTimeline.css_motion.right_bubble_ms}ms;
   --left-bubble-in: ${input.runtimeTimeline.css_motion.left_bubble_ms}ms;
-  --read-in: ${input.runtimeTimeline.css_motion.receipt_in_ms}ms;
-  --read-out: ${input.runtimeTimeline.css_motion.receipt_out_ms}ms;
   --status-swap: ${input.runtimeTimeline.css_motion.header_swap_ms}ms;
   --bubble-ease: cubic-bezier(.16, 1, .3, 1);
   --soft-ease: cubic-bezier(.2, .8, .2, 1);
@@ -76,19 +74,14 @@ html, body { margin: 0; width: 100%; height: 100%; background: #efefef; color: #
 .row.right .message-avatar { order: 2; }
 .row.entering .bubble { animation: bubbleFloatPop var(--bubble-in) var(--bubble-ease) both; will-change: transform, opacity; }
 .row.entering .message-avatar { animation: avatarSoftIn 180ms var(--soft-ease) both; will-change: transform, opacity; }
-.row.right.entering .bubble { --bubble-in: var(--right-bubble-in); transform-origin: right bottom; }
-.row.left.entering .bubble { --bubble-in: var(--left-bubble-in); transform-origin: left bottom; }
+.row.right.entering .bubble { --bubble-in: var(--right-bubble-in); transform-origin: center bottom; }
+.row.left.entering .bubble { --bubble-in: var(--left-bubble-in); transform-origin: center bottom; }
 .bubble-stack { display: flex; flex-direction: column; align-items: flex-start; }
 .row.right .bubble-stack { align-items: flex-end; }
 .message-avatar { width: 104px; height: 104px; }
 .bubble { max-width: 710px; box-sizing: border-box; border-radius: 20px; padding: 28px 32px; font-size: 38px; font-weight: 400; line-height: 54px; white-space: pre-wrap; overflow-wrap: anywhere; word-break: break-word; box-shadow: 0 1px 2px rgba(0,0,0,.03); }
 .left .bubble { background: #ffffff; color: #161823; }
 .right .bubble { background: #4f7aff; color: #ffffff; }
-.read-receipt { min-height: 36px; margin-top: 18px; display: inline-flex; align-items: center; gap: 8px; color: #777982; font-size: 30px; line-height: 36px; opacity: 0; visibility: hidden; transform: translate3d(0, -2px, 0); will-change: transform, opacity; }
-.row.right.read-in .read-receipt { visibility: visible; animation: receiptIn var(--read-in) var(--soft-ease) 40ms both; }
-.row.right.read-on .read-receipt { opacity: 1; visibility: visible; transform: translate3d(0, 0, 0); }
-.row.right.read-out .read-receipt { visibility: visible; animation: receiptOut var(--read-out) ease-in both; }
-.receipt-avatar { width: 38px; height: 38px; }
 @keyframes bubbleFloatPop {
   0% { opacity: 0; transform: translate3d(0, 18px, 0) scale(.965); }
   56% { opacity: 1; transform: translate3d(0, -2px, 0) scale(1.018); }
@@ -98,15 +91,6 @@ html, body { margin: 0; width: 100%; height: 100%; background: #efefef; color: #
 @keyframes avatarSoftIn {
   0% { opacity: 0; transform: translate3d(0, 8px, 0) scale(.96); }
   100% { opacity: 1; transform: translate3d(0, 0, 0) scale(1); }
-}
-@keyframes receiptIn {
-  0% { opacity: 0; transform: translate3d(0, -2px, 0); }
-  100% { opacity: 1; transform: translate3d(0, 0, 0); }
-}
-@keyframes receiptOut {
-  0% { opacity: 1; visibility: visible; transform: translate3d(0, 0, 0); }
-  99% { visibility: visible; }
-  100% { opacity: 0; visibility: hidden; transform: translate3d(0, -2px, 0); }
 }
 </style>
 </head>
@@ -134,9 +118,6 @@ ${input.conversationPlan.messages.map((message) => messageRowHtml(message, uiPro
   const timeline = data.runtimeTimeline;
   const rows = new Map(Array.from(document.querySelectorAll("[data-message-id]")).map((row) => [row.dataset.messageId, row]));
   const events = timeline.events.filter((event) => event.type === "message");
-  const hideReceiptAt = new Map(events
-    .filter((event) => event.hide_receipt_message_id)
-    .map((event) => [event.hide_receipt_message_id, event.at_sec]));
   const chatViewport = document.getElementById("chatViewport");
   const chatTrack = document.getElementById("chatTrack");
   const CHAT_BOTTOM_RESERVE_PX = 300;
@@ -193,12 +174,10 @@ ${input.conversationPlan.messages.map((message) => messageRowHtml(message, uiPro
       const row = getRow(event.message_id);
       const bubble = row.querySelector(".bubble");
       const avatar = row.querySelector(".message-avatar");
-      const receipt = row.querySelector(".read-receipt");
       const bubbleMs = event.side === "right" ? timeline.css_motion.right_bubble_ms : timeline.css_motion.left_bubble_ms;
-      row.classList.remove("entering", "entered", "read-in", "read-on", "read-out");
+      row.classList.remove("entering", "entered");
       clearAnimationState(bubble);
       clearAnimationState(avatar);
-      clearAnimationState(receipt);
       if (timeSec < event.at_sec) {
         row.classList.add("is-hidden");
         continue;
@@ -212,31 +191,8 @@ ${input.conversationPlan.messages.map((message) => messageRowHtml(message, uiPro
       } else {
         row.classList.add("entered");
       }
-      if (event.show_receipt_after_enter) {
-        renderReceipt(row, receipt, event, timeSec, bubbleMs, hideReceiptAt.get(event.message_id));
-      }
     }
     chatTrack.style.transform = "translate3d(0, " + trackYAt(timeSec) + "px, 0)";
-  }
-
-  function renderReceipt(row, receipt, event, timeSec, bubbleMs, hideAtSec) {
-    const receiptInSec = timeline.css_motion.receipt_in_ms / 1000;
-    const receiptOutSec = timeline.css_motion.receipt_out_ms / 1000;
-    const receiptAtSec = event.at_sec + (bubbleMs + 40) / 1000;
-    if (hideAtSec !== undefined && timeSec >= hideAtSec) {
-      if (timeSec < hideAtSec + receiptOutSec) {
-        row.classList.add("read-out");
-        setAnimationProgress(receipt, timeline.css_motion.receipt_out_ms, clamp01((timeSec - hideAtSec) / receiptOutSec));
-      }
-      return;
-    }
-    if (timeSec < receiptAtSec) return;
-    if (timeSec < receiptAtSec + receiptInSec) {
-      row.classList.add("read-in");
-      setAnimationProgress(receipt, timeline.css_motion.receipt_in_ms, clamp01((timeSec - receiptAtSec) / receiptInSec));
-      return;
-    }
-    row.classList.add("read-on");
   }
 
   function trackYAt(timeSec) {
@@ -342,7 +298,7 @@ export function validateChatRuntimeHtml(html: string): { ok: boolean; issues: st
   if (!/data-message-id="msg_/.test(html)) issues.push("chat runtime html must render message rows with data-message-id");
   if (!/class="row (?:left|right) is-hidden"/.test(html)) issues.push("chat runtime html message rows must start hidden");
   if (!/class="peer-name"/.test(html) || !/class="typing-name"/.test(html)) issues.push("chat runtime html must include peer and typing title slots");
-  for (const token of ["bubbleFloatPop", "avatarSoftIn", "receiptIn", "receiptOut"]) {
+  for (const token of ["bubbleFloatPop", "avatarSoftIn"]) {
     if (!html.includes(token)) issues.push(`chat runtime html must include ${token}`);
   }
   for (const token of ["playTimeline", "seekTimeline", "renderAt", "trackYAt", "requestAnimationFrame", "classList"]) {
@@ -353,10 +309,8 @@ export function validateChatRuntimeHtml(html: string): { ok: boolean; issues: st
   if (!html.includes("chatTrack.style.transform") || !html.includes("trackYAt(timeSec)")) issues.push("chat runtime html must move the chat track with translate3d");
   if (/safety-notice|为保障用户沟通安全|为保证用户安全/.test(html)) issues.push("chat runtime html must not include the safety notice");
   if (!/overflow-wrap:\s*anywhere/.test(html)) issues.push("chat runtime html must include long-text wrapping");
-  if (/read-out[\s\S]{0,200}display\s*:\s*none/i.test(html)) issues.push("chat runtime html must not hide receipt read-out with display:none");
-  if (/class="row right/.test(html) && (!/class="receipt-avatar avatar-slot"/.test(html) || !/src="\.\.\/assets\/avatars\//.test(html))) {
-    issues.push("chat runtime html receipt avatar must use the contact avatar");
-  }
+  if (/已读|read-receipt|receipt-avatar/.test(html)) issues.push("chat runtime html must not render read receipts");
+  if (!/transform-origin:\s*center bottom/.test(html)) issues.push("chat runtime html bubble entry must use centered vertical origin");
   if (!/data-avatar-role="contact"/.test(html)) issues.push("chat runtime html must expose a contact avatar role");
   if (/class="row left/.test(html) && !/data-avatar-role="left-speaker"/.test(html)) issues.push("chat runtime html must expose left speaker avatar roles");
   if (/class="row right/.test(html) && !/data-avatar-role="right-speaker"/.test(html)) issues.push("chat runtime html must expose right speaker avatar roles");
@@ -378,11 +332,8 @@ function runtimeUiProfile(conversationPlan: ConversationPlan): ResolvedRuntimeUi
 function messageRowHtml(message: ConversationPlan["messages"][number], uiProfile: ResolvedRuntimeUiProfile): string {
   const side = message.side;
   const avatarSrc = side === "left" ? uiProfile.leftAvatarSrc : uiProfile.rightAvatarSrc;
-  const receipt = side === "right"
-    ? `<div class="read-receipt" aria-hidden="true"><span class="receipt-text">已读</span><span class="receipt-avatar avatar-slot">${avatarImg(uiProfile.leftAvatarSrc)}</span></div>`
-    : "";
   if (side === "right") {
-    return `    <div class="row right is-hidden" data-message-id="${escapeHtml(message.id)}"><div class="bubble-stack"><div class="bubble bubble-right">${escapeHtml(message.display_text)}</div>${receipt}</div><div class="avatar-slot message-avatar avatar-right" data-avatar-role="right-speaker" aria-hidden="true">${avatarImg(avatarSrc)}</div></div>`;
+    return `    <div class="row right is-hidden" data-message-id="${escapeHtml(message.id)}"><div class="bubble-stack"><div class="bubble bubble-right">${escapeHtml(message.display_text)}</div></div><div class="avatar-slot message-avatar avatar-right" data-avatar-role="right-speaker" aria-hidden="true">${avatarImg(avatarSrc)}</div></div>`;
   }
   return `    <div class="row left is-hidden" data-message-id="${escapeHtml(message.id)}"><div class="avatar-slot message-avatar avatar-left" data-avatar-role="left-speaker" aria-hidden="true">${avatarImg(avatarSrc)}</div><div class="bubble-stack"><div class="bubble bubble-left">${escapeHtml(message.display_text)}</div></div></div>`;
 }
