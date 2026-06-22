@@ -8,7 +8,7 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 7
+- **Total Sessions**: 8
 - **Last Active**: 2026-06-22
 <!-- @@@/auto:current-status -->
 
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~251 | Active |
+| `journal-1.md` | ~284 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 8 | 2026-06-22 | Chat UI profile artifact | `d800a31` | `main` |
 | 7 | 2026-06-22 | Browser recording renderer mainline | `2795ad9` | `codex/planv5-track-trellis-files` |
 | 6 | 2026-06-21 | chat_dialogue_mv 2test production validation | `787a7bf` | `codex/planv5-track-trellis-files` |
 | 5 | 2026-06-19 | Codex Trellis Ponytail standard | - | `codex/planv5-track-trellis-files` |

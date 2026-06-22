@@ -249,3 +249,36 @@ Implemented browser-recording chat_dialogue_mv renderer as the production mainli
 ### Next Steps
 
 - None - task complete
+
+
+## Session 8: Chat UI profile artifact
+
+**Date**: 2026-06-22
+**Task**: Chat UI profile artifact
+**Branch**: `main`
+
+### Summary
+
+Loaded project-level chat_ui_profile.json into chat dialogue conversation plans and documented the artifact contract.
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `d800a31` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
