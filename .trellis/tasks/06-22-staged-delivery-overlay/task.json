@@ -1,0 +1,43 @@
+{
+  "id": "staged-delivery-overlay",
+  "name": "staged-delivery-overlay",
+  "title": "Staged delivery overlay",
+  "description": "Implement the v1.4.1 staged delivery overlay foundation without changing the full Trellis state machine.",
+  "status": "in_progress",
+  "dev_type": null,
+  "scope": null,
+  "package": null,
+  "priority": "P2",
+  "creator": "jym",
+  "assignee": "jym",
+  "createdAt": "2026-06-22",
+  "completedAt": null,
+  "branch": null,
+  "base_branch": "main",
+  "worktree_path": null,
+  "commit": "0b605de",
+  "pr_url": null,
+  "subtasks": [],
+  "children": [],
+  "parent": null,
+  "relatedFiles": [
+    ".trellis/workflow.md",
+    ".trellis/spec/project/",
+    ".trellis/templates/staged/"
+  ],
+  "notes": "First-layer overlay only: docs, templates, task metadata conventions, and workflow pointers. No full state machine, no archive rewrite, no continue/finish route changes.",
+  "meta": {
+    "workflow_mode": "staged_overlay",
+    "staged_delivery": {
+      "phase": "soft_archived",
+      "source_prd": "/mnt/c/Users/Jym/Downloads/tele/v1_4_1_staged_delivery_overlay_prd.md",
+      "plan_confirmed": true,
+      "implementation_task_submitted": true,
+      "completion_signal_received": true,
+      "commit_allowed": true,
+      "work_commit": "0b605de",
+      "soft_archive_completed": true,
+      "trellis_archive_completed": false
+    }
+  }
+}
