@@ -282,3 +282,36 @@ Loaded project-level chat_ui_profile.json into chat dialogue conversation plans 
 ### Next Steps
 
 - None - task complete
+
+
+## Session 9: Fix chat dialogue bubbles and shared assets
+
+**Date**: 2026-06-22
+**Task**: Fix chat dialogue bubbles and shared assets
+**Branch**: `main`
+
+### Summary
+
+Fixed chat runtime capture to seek each frame so bubbles render, moved chat icons and avatars to reusable symlinked standard assets with A/B/C profiles, and updated focused tests/spec.
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `3710554` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
