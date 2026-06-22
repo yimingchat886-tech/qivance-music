@@ -142,6 +142,51 @@ test("renders V6 video_chain subpage with preview revision and explicit export c
   assert.match(html, /\/chains\/video-chain\/export\/final\.mp4/);
 });
 
+test("renders stale V6 final export without current download delivery", () => {
+  const html = renderWorkbenchV6VideoChainPage({
+    detail: {
+      schema_version: 1,
+      project_id: "project_v6_stale",
+      title: "V6 Video Chain Stale",
+      description: null,
+      content_type: "video_chain",
+      status: "ready",
+      project_root: "projects/project_v6_stale",
+      inputs: [],
+      chains: [],
+      artifacts: [
+        {
+          id: "artifact_frames",
+          chain_id: "video_chain",
+          kind: "frame_contracts",
+          path: "data/chains/video_chain/frame_contracts.json",
+          sha256: "d".repeat(64),
+          schema_version: "1",
+          status: "current",
+          created_by_run_id: "run_preview",
+          created_at: "2026-06-16T00:00:00.000Z",
+        },
+        {
+          id: "artifact_final",
+          chain_id: "video_chain",
+          kind: "final",
+          path: "exports/video_chain/final.mp4",
+          sha256: "e".repeat(64),
+          schema_version: null,
+          status: "stale",
+          created_by_run_id: "run_export",
+          created_at: "2026-06-16T00:00:00.000Z",
+        },
+      ],
+      runs: [],
+    },
+  });
+
+  assert.match(html, /Final export[\s\S]*stale/);
+  assert.match(html, /<button disabled>Download final MP4<\/button>/);
+  assert.doesNotMatch(html, /\/chains\/video-chain\/export\/final\.mp4/);
+});
+
 test("renders V5 product-entry controls and scheduler progress", () => {
   const html = renderWorkbenchV5ProjectDetailPage({
     detail: {

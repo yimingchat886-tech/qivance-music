@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp, stat } from "node:fs/promises";
+import { mkdtemp, readFile, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { DatabaseSync } from "node:sqlite";
 import path from "node:path";
@@ -8,6 +8,7 @@ import { createControlPlaneProject, createControlPlaneId } from "../src/lib/db/c
 import {
   closeQivancePrismaClient,
   createQivancePrismaClient,
+  ensureControlPlaneDatabase,
   resolveControlPlaneDatabasePath,
 } from "../src/lib/db/prisma-client.ts";
 
@@ -119,6 +120,91 @@ test("initializes V5 SQLite control plane and stores metadata rows only", async 
       }
     } finally {
       db.close();
+    }
+  } finally {
+    await closeQivancePrismaClient(prisma);
+  }
+});
+
+test("migration supersedes duplicate active inputs before enforcing one active input per kind", async () => {
+  const storageRoot = await mkdtemp(path.join(tmpdir(), "qivance-control-plane-"));
+  const projectId = "duplicate_active_inputs_project";
+  const db = new DatabaseSync(resolveControlPlaneDatabasePath(storageRoot));
+  try {
+    db.exec("PRAGMA foreign_keys = ON");
+    db.exec(`CREATE TABLE "_qivance_migrations" (
+      "name" TEXT NOT NULL PRIMARY KEY,
+      "applied_at" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+    )`);
+    db.exec(await readFile(path.join(process.cwd(), "prisma/migrations/20260615000000_v5_control_plane/migration.sql"), "utf8"));
+    db.prepare(`INSERT INTO "_qivance_migrations" ("name") VALUES (?)`).run("20260615000000_v5_control_plane");
+    db.prepare(`INSERT INTO "projects" ("id", "title", "content_type", "status", "project_root") VALUES (?, ?, ?, ?, ?)`)
+      .run(projectId, "Duplicate Active Inputs", "chat_dialogue_mv", "input_uploaded", path.join(storageRoot, projectId));
+    const insertInput = db.prepare(`INSERT INTO "project_inputs" (
+      "id", "project_id", "kind", "status", "original_name", "path", "stable_path", "sha256", "mime", "created_at"
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`);
+    insertInput.run(
+      "input_old",
+      projectId,
+      "lyrics",
+      "active",
+      "old.md",
+      "inputs/lyrics/input_old.md",
+      "lyrics.md",
+      "a".repeat(64),
+      "text/markdown",
+      "2026-06-17 10:00:00",
+    );
+    insertInput.run(
+      "input_new",
+      projectId,
+      "lyrics",
+      "active",
+      "new.md",
+      "inputs/lyrics/input_new.md",
+      "lyrics.md",
+      "b".repeat(64),
+      "text/markdown",
+      "2026-06-17 11:00:00",
+    );
+  } finally {
+    db.close();
+  }
+
+  await ensureControlPlaneDatabase(storageRoot);
+  const prisma = await createQivancePrismaClient(storageRoot);
+  try {
+    const inputs = await prisma.projectInput.findMany({
+      where: { projectId, kind: "lyrics" },
+      orderBy: { id: "asc" },
+    });
+    assert.deepEqual(inputs.map((input) => [input.id, input.status]), [
+      ["input_new", "active"],
+      ["input_old", "superseded"],
+    ]);
+    await assert.rejects(
+      prisma.projectInput.create({
+        data: {
+          id: "input_duplicate",
+          projectId,
+          kind: "lyrics",
+          status: "active",
+          originalName: "duplicate.md",
+          path: "inputs/lyrics/input_duplicate.md",
+          stablePath: "lyrics.md",
+          sha256: "c".repeat(64),
+          mime: "text/markdown",
+        },
+      }),
+      /Unique constraint failed|constraint failed/i,
+    );
+
+    const dbAfter = new DatabaseSync(resolveControlPlaneDatabasePath(storageRoot), { readOnly: true });
+    try {
+      const columns = dbAfter.prepare(`PRAGMA table_info("scheduler_runs")`).all() as Array<{ name: string }>;
+      assert.equal(columns.some((column) => column.name === "locked_inputs_json"), true);
+    } finally {
+      dbAfter.close();
     }
   } finally {
     await closeQivancePrismaClient(prisma);

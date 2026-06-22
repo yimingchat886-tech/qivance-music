@@ -28,7 +28,7 @@ test("defaults media E2E Python env to repo-local .venv and cache", () => {
   assert.equal(env.pythonExecutable, path.join("/repo", ".venv", "bin", "python"));
   assert.equal(env.whisperx.device, "cuda");
   assert.equal(env.whisperx.model, "large-v3");
-  assert.equal(env.whisperx.cacheDir.endsWith(path.join(".cache", "huggingface")), true);
+  assert.equal(env.whisperx.cacheDir, path.join("/repo", ".cache", "huggingface"));
   assert.equal(env.whisperx.requireGpu, true);
 });
 

@@ -1,4 +1,3 @@
-import os from "node:os";
 import path from "node:path";
 
 export type MediaE2EPythonEnv = {
@@ -26,7 +25,7 @@ export function resolveMediaE2EPythonEnv(input: {
     whisperx: {
       device,
       model: env.QIVANCE_WHISPERX_MODEL ?? "large-v3",
-      cacheDir: env.QIVANCE_WHISPERX_CACHE_DIR ?? env.HF_HOME ?? path.join(os.homedir(), ".cache", "huggingface"),
+      cacheDir: env.QIVANCE_WHISPERX_CACHE_DIR ?? env.HF_HOME ?? path.join(cwd, ".cache", "huggingface"),
       requireGpu: env.QIVANCE_WHISPERX_REQUIRE_GPU === "0" ? false : device === "cuda",
     },
   };
@@ -66,4 +65,3 @@ export function validateWhisperXPreflight(input: {
     diagnostics,
   };
 }
-

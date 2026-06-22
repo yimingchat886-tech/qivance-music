@@ -50,13 +50,15 @@ test("V4 scheduler and chat chain APIs create runs and expose status", async () 
     });
     assert.equal(framesResponse.status, 200);
     const frames = await framesResponse.json();
-    assert.equal(frames.frames.length > 0, true);
-    assert.equal(frames.frames[0].html_path.includes("chat_dialogue_mv_001.html"), true);
+    assert.equal(frames.render_mode, "browser_recording");
+    assert.equal(frames.frames.length, 0);
+    assert.equal(frames.runtime_html_path.endsWith("/runtime/chat_dialogue_mv.html"), true);
 
     const previewResponse = await fetch(`${baseUrl}/api/projects/${projectId}/chains/chat-dialogue-mv/preview`);
     assert.equal(previewResponse.status, 200);
     const preview = await previewResponse.json();
-    assert.equal(preview.frames.length, frames.frames.length);
+    assert.equal(preview.render_mode, "browser_recording");
+    assert.equal(preview.runtime_html.path.endsWith("/runtime/chat_dialogue_mv.html"), true);
 
     const revisionResponse = await fetch(`${baseUrl}/api/projects/${projectId}/chains/chat-dialogue-mv/revise`, {
       method: "POST",

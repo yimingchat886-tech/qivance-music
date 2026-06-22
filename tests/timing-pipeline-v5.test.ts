@@ -13,6 +13,10 @@ import { writeJson } from "../src/lib/fs-utils.ts";
 test("V5 timing handler writes production timing artifacts and DB artifact rows", async () => {
   const storageRoot = await mkdtemp(path.join(tmpdir(), "qivance-timing-v5-"));
   const prisma = await createQivancePrismaClient(storageRoot);
+  const oldCacheDir = process.env.QIVANCE_WHISPERX_CACHE_DIR;
+  const oldHfHome = process.env.HF_HOME;
+  delete process.env.QIVANCE_WHISPERX_CACHE_DIR;
+  delete process.env.HF_HOME;
   try {
     const { runId, projectRoot } = await createConfirmedRun(prisma, storageRoot, "timing_project");
     const result = await runV5SchedulerOnce(prisma, createV5TaskHandlers({
@@ -21,6 +25,7 @@ test("V5 timing handler writes production timing artifacts and DB artifact rows"
         await writeAudioAnalysis(outputDir, 2);
       },
       runWhisperXAlignment: async (input) => {
+        assert.equal(input.cacheDir, path.join(process.cwd(), ".cache", "huggingface"));
         await writeJson(input.wordTimingPath, {
           schema_version: 1,
           backend: "whisperx",
@@ -57,6 +62,10 @@ test("V5 timing handler writes production timing artifacts and DB artifact rows"
     assert.equal(artifacts.length, 6);
     assert.ok(artifacts.some((artifact) => artifact.path === "data/timing/section_map.json"));
   } finally {
+    if (oldCacheDir === undefined) delete process.env.QIVANCE_WHISPERX_CACHE_DIR;
+    else process.env.QIVANCE_WHISPERX_CACHE_DIR = oldCacheDir;
+    if (oldHfHome === undefined) delete process.env.HF_HOME;
+    else process.env.HF_HOME = oldHfHome;
     await closeQivancePrismaClient(prisma);
   }
 });

@@ -5,6 +5,10 @@
   "type": "module",
   "scripts": {
     "test": "node --experimental-strip-types --test tests/html-video-*.test.ts",
+    "test:v5": "TMPDIR=/tmp node --experimental-strip-types --test tests/prisma-control-plane.test.ts tests/chain-registry-v5.test.ts tests/project-create-v5.test.ts tests/project-inputs-v5.test.ts tests/server-runner-loop-v5.test.ts tests/timing-pipeline-v5.test.ts tests/chat-dialogue-runner-v5.test.ts tests/workbench-v5-api.test.ts",
+    "test:v6": "TMPDIR=/tmp node --experimental-strip-types --test tests/source-video-import.test.ts tests/video-chain-runner.test.ts tests/video-chain-lifecycle.test.ts tests/render-manifest-v6.test.ts tests/video-chain-frame-validation.test.ts",
+    "test:backend": "TMPDIR=/tmp node --experimental-strip-types --test tests/prisma-control-plane.test.ts tests/chain-registry-v5.test.ts tests/project-create-v5.test.ts tests/project-inputs-v5.test.ts tests/server-runner-loop-v5.test.ts tests/timing-pipeline-v5.test.ts tests/chat-dialogue-runner-v5.test.ts tests/workbench-html.test.ts tests/workbench-v5-api.test.ts tests/source-video-import.test.ts tests/video-chain-runner.test.ts tests/video-chain-lifecycle.test.ts tests/render-manifest-v6.test.ts tests/video-chain-frame-validation.test.ts",
+    "e2e:v6": "node --experimental-strip-types scripts/e2e-v6-video-chain-product-entry.ts --allow-blocked --timeout-ms 180000",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "dev": "node --experimental-strip-types src/server.ts",
     "prisma:generate": "prisma generate",

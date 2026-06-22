@@ -10,7 +10,12 @@ export type RenderManifestV4 = {
     id: "chat_dialogue_mv";
     run_id: string;
     conversation_plan: RenderManifestV4EvidenceRef;
-    frame_contracts: RenderManifestV4EvidenceRef;
+    frame_contracts?: RenderManifestV4EvidenceRef;
+    runtime_timeline?: RenderManifestV4EvidenceRef;
+    runtime_html?: RenderManifestV4EvidenceRef;
+    browser_render_evidence?: RenderManifestV4EvidenceRef;
+    render_mode: "browser_recording" | "static_microframes";
+    fps: number;
   };
   inputs: {
     lyrics: RenderManifestV4EvidenceRef;
@@ -37,7 +42,12 @@ export type BuildRenderManifestV4Input = {
   mode?: "production" | "diagnostic";
   runId: string;
   conversationPlan: RenderManifestV4EvidenceRef;
-  frameContracts: RenderManifestV4EvidenceRef;
+  frameContracts?: RenderManifestV4EvidenceRef;
+  runtimeTimeline?: RenderManifestV4EvidenceRef;
+  runtimeHtml?: RenderManifestV4EvidenceRef;
+  browserRenderEvidence?: RenderManifestV4EvidenceRef;
+  renderMode?: "browser_recording" | "static_microframes";
+  fps?: number;
   lyrics: RenderManifestV4EvidenceRef;
   audio: RenderManifestV4EvidenceRef;
   timing: Record<string, RenderManifestV4EvidenceRef>;
@@ -52,6 +62,7 @@ export type BuildRenderManifestV4Input = {
 };
 
 export function buildRenderManifestV4(input: BuildRenderManifestV4Input): RenderManifestV4 {
+  const renderMode = input.renderMode ?? "static_microframes";
   return {
     schema_version: 4,
     mode: input.mode ?? "production",
@@ -59,7 +70,12 @@ export function buildRenderManifestV4(input: BuildRenderManifestV4Input): Render
       id: "chat_dialogue_mv",
       run_id: input.runId,
       conversation_plan: input.conversationPlan,
-      frame_contracts: input.frameContracts,
+      ...(input.frameContracts ? { frame_contracts: input.frameContracts } : {}),
+      ...(input.runtimeTimeline ? { runtime_timeline: input.runtimeTimeline } : {}),
+      ...(input.runtimeHtml ? { runtime_html: input.runtimeHtml } : {}),
+      ...(input.browserRenderEvidence ? { browser_render_evidence: input.browserRenderEvidence } : {}),
+      render_mode: renderMode,
+      fps: input.fps ?? (renderMode === "browser_recording" ? 60 : 30),
     },
     inputs: {
       lyrics: input.lyrics,
@@ -89,7 +105,16 @@ export function validateRenderManifestV4(manifest: RenderManifestV4): { ok: bool
   if (manifest.chain.id !== "chat_dialogue_mv") issues.push("render_manifest.chain.id must be chat_dialogue_mv");
   if (!manifest.chain.run_id) issues.push("render_manifest.chain.run_id is required");
   requireEvidence(manifest.chain.conversation_plan, "chain.conversation_plan", issues);
-  requireEvidence(manifest.chain.frame_contracts, "chain.frame_contracts", issues);
+  if (manifest.chain.render_mode === "browser_recording") {
+    requireEvidence(manifest.chain.runtime_timeline, "chain.runtime_timeline", issues);
+    requireEvidence(manifest.chain.runtime_html, "chain.runtime_html", issues);
+    requireEvidence(manifest.chain.browser_render_evidence, "chain.browser_render_evidence", issues);
+    if (manifest.chain.fps !== 60) issues.push("chain.fps must be 60 for browser_recording");
+  } else if (manifest.chain.render_mode === "static_microframes") {
+    requireEvidence(manifest.chain.frame_contracts, "chain.frame_contracts", issues);
+  } else {
+    issues.push("chain.render_mode is invalid");
+  }
   requireEvidence(manifest.inputs.lyrics, "inputs.lyrics", issues);
   requireEvidence(manifest.inputs.audio, "inputs.audio", issues);
   requireEvidence(manifest.outputs.visual, "outputs.visual", issues);
@@ -110,7 +135,7 @@ export function validateRenderManifestV4(manifest: RenderManifestV4): { ok: bool
   return { ok: issues.length === 0, issues };
 }
 
-function requireEvidence(ref: RenderManifestV4EvidenceRef, label: string, issues: string[]): void {
+function requireEvidence(ref: RenderManifestV4EvidenceRef | undefined, label: string, issues: string[]): void {
   if (!ref || typeof ref.path !== "string" || ref.path.length === 0) issues.push(`${label}.path is required`);
   if (!ref || typeof ref.sha256 !== "string" || ref.sha256.length === 0) issues.push(`${label}.sha256 is required`);
 }

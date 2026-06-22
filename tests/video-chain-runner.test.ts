@@ -63,9 +63,16 @@ test("video_chain runner builds MP4-background html-video preview and explicit f
     const sourceImport = JSON.parse(await readFile(path.join(project.projectRoot, "data/source/source_video_import.json"), "utf8"));
     assert.equal(sourceImport.audio_policy, "background_video_only");
 
-    await buildVideoChainFrames(project, deps);
+    const frameResult = await buildVideoChainFrames(project, deps);
     const preview = await loadHtmlVideoPreviewModel(resolveSmallProjectPaths(storageRoot, project.id));
     assert.equal(preview.frames.length, 2);
+    assert.equal(frameResult.outputArtifacts.length, 1);
+    const agentRunArtifact = frameResult.outputArtifacts[0]!;
+    assert.equal(agentRunArtifact.kind, "agent_run");
+    assert.equal(agentRunArtifact.schemaVersion, "1");
+    assert.match(agentRunArtifact.path, /^video\/html-video\/\.html-video\/projects\/video_chain_project\/agent_runs\/agent_run_.+\.json$/);
+    const agentRunLog = JSON.parse(await readFile(path.join(project.projectRoot, agentRunArtifact.path), "utf8"));
+    assert.equal(agentRunLog.operation, "run_agent");
 
     await renderVideoChainVisual(project, deps);
     await muxVideoChainFinal(project, deps);
@@ -77,6 +84,9 @@ test("video_chain runner builds MP4-background html-video preview and explicit f
     assert.equal(manifest.chain.id, "video_chain");
     assert.equal(manifest.inputs.background_video.audio_policy, "ignore_source_audio");
     assert.equal(manifest.qa.final_audio_source, "active_music_take.mp3");
+    assert.equal(manifest.qa.audio_stream_count, 1);
+    assert.equal(manifest.production_gates.html_video_agent_required, true);
+    assert.equal(manifest.production_gates.fallback_frames_used, false);
   } finally {
     await closeQivancePrismaClient(prisma);
   }

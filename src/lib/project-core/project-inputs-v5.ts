@@ -3,11 +3,13 @@ import { copyFile, mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 import type { MultipartFile } from "../multipart-form.ts";
 import { buildV5SchedulerTaskSeeds, requireEnabledV5Chain, type V5ChainInputKind } from "../chain-registry/chain-registry.ts";
-import { createControlPlaneId, markCurrentArtifactsStale } from "../db/control-plane.ts";
+import { createControlPlaneId } from "../db/control-plane.ts";
 import type { QivancePrismaClient } from "../db/prisma-client.ts";
 import { importSourceVideoAsset } from "../video-html/source-video-import.ts";
+import type { SourceVideoImportProbe } from "../video-html/source-video-import.ts";
+import { buildLockedInputSnapshot, serializeLockedInputSnapshot } from "./locked-input-snapshot.ts";
 
-const REPLACE_ALLOWED_PROJECT_STATUSES = new Set(["draft", "input_required", "input_uploaded", "stopped", "failed", "passed"]);
+const REPLACE_ALLOWED_PROJECT_STATUSES = new Set(["draft", "input_required", "input_uploaded", "ready", "stopped", "failed", "passed"]);
 const ACTIVE_RUN_STATUSES = new Set(["queued", "running", "stopping"]);
 
 export type V5InputUpload = {
@@ -16,6 +18,10 @@ export type V5InputUpload = {
   audioFile?: MultipartFile;
   videoFile?: MultipartFile;
   replace?: boolean;
+};
+
+export type V5ProjectInputDeps = {
+  probeSourceVideo?: SourceVideoImportProbe;
 };
 
 export async function uploadV5ProjectInputs(
@@ -43,64 +49,92 @@ export async function uploadV5ProjectInputs(
     throw new Error(`Cannot replace inputs while project status is ${project.status}.`);
   }
 
-  if (upload.replace) {
-    await prisma.projectInput.updateMany({
-      where: {
-        projectId,
-        kind: { in: requestedInputs.map((input) => input.kind) },
-        status: "active",
-      },
-      data: { status: "superseded" },
-    });
-    if (replacesExisting) await markCurrentArtifactsStale(prisma, projectId);
-  }
+  const inputRecords = requestedInputs.map((input) => {
+    const id = createControlPlaneId("input");
+    return {
+      ...input,
+      id,
+      relativePath: immutableInputPath(input.kind, id, input.extension),
+    };
+  });
 
-  const createdInputs = [];
-  for (const input of requestedInputs) {
+  for (const input of inputRecords) {
     const absolutePath = path.join(project.projectRoot, input.relativePath);
     await mkdir(path.dirname(absolutePath), { recursive: true });
     await writeFile(absolutePath, input.data);
-    createdInputs.push(await prisma.projectInput.create({
-      data: {
-        id: createControlPlaneId("input"),
-        projectId,
-        kind: input.kind,
-        status: "active",
-        originalName: input.originalName,
-        path: input.relativePath,
-        stablePath: stablePathForInputKind(input.kind),
-        sha256: sha256Buffer(input.data),
-        mime: input.mime,
-      },
-    }));
   }
 
-  const activeInputs = await prisma.projectInput.findMany({
-    where: {
-      projectId,
-      status: "active",
-    },
-  });
-  const chain = requireEnabledV5Chain(project.contentType);
-  const activeKinds = new Set(activeInputs.map((input) => input.kind));
-  const nextStatus = chain.input_requirements.every((kind) => activeKinds.has(kind)) ? "input_uploaded" : "input_required";
-  await prisma.project.update({
-    where: { id: projectId },
-    data: { status: nextStatus },
-  });
-  await prisma.chain.updateMany({
-    where: { projectId },
-    data: { status: nextStatus },
-  });
+  return prisma.$transaction(async (tx) => {
+    if (upload.replace) {
+      await tx.projectInput.updateMany({
+        where: {
+          projectId,
+          kind: { in: requestedInputs.map((input) => input.kind) },
+          status: "active",
+        },
+        data: { status: "superseded" },
+      });
+      if (replacesExisting) {
+        await tx.artifact.updateMany({
+          where: {
+            projectId,
+            status: "current",
+          },
+          data: {
+            status: "stale",
+          },
+        });
+      }
+    }
 
-  return {
-    project_id: projectId,
-    status: nextStatus,
-    inputs: createdInputs.map((input) => inputResponse(input)),
-  };
+    const createdInputs = [];
+    for (const input of inputRecords) {
+      createdInputs.push(await tx.projectInput.create({
+        data: {
+          id: input.id,
+          projectId,
+          kind: input.kind,
+          status: "active",
+          originalName: input.originalName,
+          path: input.relativePath,
+          stablePath: stablePathForInputKind(input.kind),
+          sha256: sha256Buffer(input.data),
+          mime: input.mime,
+        },
+      }));
+    }
+
+    const activeInputs = await tx.projectInput.findMany({
+      where: {
+        projectId,
+        status: "active",
+      },
+    });
+    const chain = requireEnabledV5Chain(project.contentType);
+    const activeKinds = new Set(activeInputs.map((input) => input.kind));
+    const nextStatus = chain.input_requirements.every((kind) => activeKinds.has(kind)) ? "input_uploaded" : "input_required";
+    await tx.project.update({
+      where: { id: projectId },
+      data: { status: nextStatus },
+    });
+    await tx.chain.updateMany({
+      where: { projectId },
+      data: { status: nextStatus },
+    });
+
+    return {
+      project_id: projectId,
+      status: nextStatus,
+      inputs: createdInputs.map((input) => inputResponse(input)),
+    };
+  });
 }
 
-export async function confirmV5ProjectInputs(prisma: QivancePrismaClient, projectId: string) {
+export async function confirmV5ProjectInputs(
+  prisma: QivancePrismaClient,
+  projectId: string,
+  deps: V5ProjectInputDeps = {},
+) {
   const project = await prisma.project.findUnique({
     where: { id: projectId },
     include: {
@@ -114,9 +148,6 @@ export async function confirmV5ProjectInputs(prisma: QivancePrismaClient, projec
     throw new Error("Cannot confirm inputs while a queued, running, or stopping run exists.");
   }
 
-  const activeLyrics = project.inputs.find((input) => input.kind === "lyrics" && input.status === "active");
-  const activeAudio = project.inputs.find((input) => input.kind === "audio" && input.status === "active");
-  const activeVideo = project.inputs.find((input) => input.kind === "video" && input.status === "active");
   const chain = project.chains.find((item) => item.chainId === project.contentType);
   if (!chain) throw new Error(`Missing ${project.contentType} chain.`);
   const registryEntry = requireEnabledV5Chain(chain.chainId);
@@ -125,6 +156,11 @@ export async function confirmV5ProjectInputs(prisma: QivancePrismaClient, projec
   if (missingInputs.length > 0) {
     throw new Error(`Confirm inputs requires active ${humanInputList(registryEntry.input_requirements)}.`);
   }
+
+  const activeLyrics = activeByKind.get("lyrics");
+  const activeAudio = activeByKind.get("audio");
+  const activeVideo = activeByKind.get("video");
+  const lockedInputSnapshot = buildLockedInputSnapshot(registryEntry.input_requirements.map((kind) => activeByKind.get(kind)!));
 
   if (activeLyrics) await copyFile(path.join(project.projectRoot, activeLyrics.path), path.join(project.projectRoot, activeLyrics.stablePath));
   if (activeAudio) await copyFile(path.join(project.projectRoot, activeAudio.path), path.join(project.projectRoot, activeAudio.stablePath));
@@ -136,54 +172,59 @@ export async function confirmV5ProjectInputs(prisma: QivancePrismaClient, projec
       sourcePath: activeVideo.stablePath,
       copyToProject: false,
       audioPolicy: "background_video_only",
+      probe: deps.probeSourceVideo,
     });
   }
 
   const runId = createControlPlaneId("run");
-  const taskSeeds = buildV5SchedulerTaskSeeds(chain.chainId);
-  await prisma.schedulerRun.create({
-    data: {
-      id: runId,
-      projectId,
-      status: "queued",
-      mode: "production",
-      priority: 50,
-      tasks: {
-        create: taskSeeds.map((seed) => ({
-          id: `${runId}_${seed.stage}`,
-          projectId,
-          chainId: chain.chainId,
-          stage: seed.stage,
-          status: "queued",
-          dependenciesJson: JSON.stringify(seed.dependencies.map((dependency) => `${runId}_${dependency}`)),
-          resourceRequirementsJson: JSON.stringify(seed.resource_requirements),
-          inputArtifactsJson: JSON.stringify([]),
-          outputArtifactsJson: JSON.stringify(seed.output_artifacts),
-        })),
-      },
-      events: {
-        create: {
-          id: createControlPlaneId("event"),
-          eventType: "run_created",
-          message: "V5 scheduler run created from confirmed inputs.",
-          detailsJson: JSON.stringify({
-            locked_inputs: {
-              lyrics: activeLyrics?.id,
-              audio: activeAudio?.id,
-              video: activeVideo?.id,
-            },
-          }),
+  const runMode = chain.chainId === "video_chain" ? "preview" : "production";
+  const taskSeeds = chain.chainId === "video_chain"
+    ? buildV5SchedulerTaskSeeds(chain.chainId, { phase: "preview" })
+    : buildV5SchedulerTaskSeeds(chain.chainId);
+  await prisma.$transaction(async (tx) => {
+    await tx.schedulerRun.create({
+      data: {
+        id: runId,
+        projectId,
+        status: "queued",
+        mode: runMode,
+        priority: 50,
+        lockedInputsJson: serializeLockedInputSnapshot(lockedInputSnapshot),
+        tasks: {
+          create: taskSeeds.map((seed) => ({
+            id: `${runId}_${seed.stage}`,
+            projectId,
+            chainId: chain.chainId,
+            stage: seed.stage,
+            status: "queued",
+            dependenciesJson: JSON.stringify(seed.dependencies.map((dependency) => `${runId}_${dependency}`)),
+            resourceRequirementsJson: JSON.stringify(seed.resource_requirements),
+            inputArtifactsJson: JSON.stringify([]),
+            outputArtifactsJson: JSON.stringify(seed.output_artifacts),
+          })),
+        },
+        events: {
+          create: {
+            id: createControlPlaneId("event"),
+            eventType: "run_created",
+            message: "V5 scheduler run created from confirmed inputs.",
+            detailsJson: JSON.stringify({
+              mode: runMode,
+              task_phase: chain.chainId === "video_chain" ? "preview" : "production",
+              locked_inputs: lockedInputSnapshot.inputs,
+            }),
+          },
         },
       },
-    },
-  });
-  await prisma.project.update({
-    where: { id: projectId },
-    data: { status: "queued" },
-  });
-  await prisma.chain.updateMany({
-    where: { projectId, chainId: chain.chainId },
-    data: { status: "queued" },
+    });
+    await tx.project.update({
+      where: { id: projectId },
+      data: { status: "queued" },
+    });
+    await tx.chain.updateMany({
+      where: { projectId, chainId: chain.chainId },
+      data: { status: "queued" },
+    });
   });
 
   return {
@@ -196,18 +237,19 @@ export async function confirmV5ProjectInputs(prisma: QivancePrismaClient, projec
 
 function normalizeRequestedInputs(upload: V5InputUpload): Array<{
   kind: V5ChainInputKind;
+  sourceLabel: string;
   originalName: string;
-  relativePath: string;
+  extension: string;
   data: Buffer;
   mime: string;
 }> {
-  const timestamp = new Date().toISOString().replaceAll(/[^0-9]+/g, "").slice(0, 14);
   const inputs = [];
   if (upload.lyricsText !== undefined && upload.lyricsText.trim().length > 0) {
     inputs.push({
       kind: "lyrics" as const,
+      sourceLabel: "lyrics_text",
       originalName: "lyrics.md",
-      relativePath: `inputs/lyrics/lyrics_${timestamp}.md`,
+      extension: ".md",
       data: Buffer.from(upload.lyricsText, "utf8"),
       mime: "text/markdown",
     });
@@ -216,8 +258,9 @@ function normalizeRequestedInputs(upload: V5InputUpload): Array<{
     const extension = safeLyricsExtension(upload.lyricsFile.filename);
     inputs.push({
       kind: "lyrics" as const,
+      sourceLabel: "lyrics_file",
       originalName: upload.lyricsFile.filename,
-      relativePath: `inputs/lyrics/lyrics_${timestamp}${extension}`,
+      extension,
       data: nonEmptyFile(upload.lyricsFile, "lyrics_file").data,
       mime: upload.lyricsFile.mimeType || mimeForLyricsExtension(extension),
     });
@@ -226,8 +269,9 @@ function normalizeRequestedInputs(upload: V5InputUpload): Array<{
     const extension = safeAudioExtension(upload.audioFile.filename);
     inputs.push({
       kind: "audio" as const,
+      sourceLabel: "audio_file",
       originalName: upload.audioFile.filename,
-      relativePath: `inputs/audio/active_music_take_${timestamp}${extension}`,
+      extension,
       data: nonEmptyFile(upload.audioFile, "audio_file").data,
       mime: upload.audioFile.mimeType || mimeForAudioExtension(extension),
     });
@@ -236,12 +280,14 @@ function normalizeRequestedInputs(upload: V5InputUpload): Array<{
     const extension = safeVideoExtension(upload.videoFile.filename);
     inputs.push({
       kind: "video" as const,
+      sourceLabel: "video_file",
       originalName: upload.videoFile.filename,
-      relativePath: `inputs/video/source_video_${timestamp}${extension}`,
+      extension,
       data: nonEmptyFile(upload.videoFile, "video_file").data,
       mime: upload.videoFile.mimeType || "video/mp4",
     });
   }
+  assertUniqueRequestedInputKinds(inputs);
   return inputs;
 }
 
@@ -284,6 +330,28 @@ function stablePathForInputKind(kind: V5ChainInputKind): string {
       return "active_music_take.mp3";
     case "video":
       return "source_video.mp4";
+  }
+}
+
+function immutableInputPath(kind: V5ChainInputKind, inputId: string, extension: string): string {
+  switch (kind) {
+    case "lyrics":
+      return `inputs/lyrics/${inputId}${extension}`;
+    case "audio":
+      return `inputs/audio/${inputId}${extension}`;
+    case "video":
+      return `inputs/video/${inputId}${extension}`;
+  }
+}
+
+function assertUniqueRequestedInputKinds(inputs: Array<{ kind: V5ChainInputKind; sourceLabel: string }>): void {
+  const seen = new Map<V5ChainInputKind, string>();
+  for (const input of inputs) {
+    const existing = seen.get(input.kind);
+    if (existing) {
+      throw new Error(`Upload includes duplicate ${input.kind} input kind: ${existing} and ${input.sourceLabel}.`);
+    }
+    seen.set(input.kind, input.sourceLabel);
   }
 }
 

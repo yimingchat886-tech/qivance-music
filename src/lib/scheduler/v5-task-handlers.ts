@@ -1,16 +1,19 @@
 import { execFile as execFileCallback } from "node:child_process";
-import { mkdir, readFile } from "node:fs/promises";
+import { access, mkdir, readFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import { validateAudioAnalysisArtifacts } from "../audio-analysis/librosa-runner.ts";
 import type { BeatGrid, EnergyCurve, OnsetEvents } from "../audio-analysis/types.ts";
 import { buildChatAnimationPlan, validateChatAnimationPlan, writeChatAnimationPlan } from "../chat-dialogue/chat-animation-plan.ts";
+import { renderChatRuntimeToVisual } from "../chat-dialogue/chat-browser-recorder.ts";
 import { buildChatFrameContracts, validateChatFrameContracts, writeChatFrameContracts } from "../chat-dialogue/chat-frame-contracts.ts";
 import { renderChatFrameHtml, validateChatFrameHtml, writeChatFrameHtml } from "../chat-dialogue/chat-frame-html.ts";
 import { renderChatFramesToVisual } from "../chat-dialogue/chat-frame-renderer.ts";
+import { renderChatRuntimeHtml, validateChatRuntimeHtml, writeChatRuntimeHtml } from "../chat-dialogue/chat-runtime-html.ts";
+import { buildChatRuntimeTimeline, validateChatRuntimeTimeline, writeChatRuntimeTimeline, type ChatRuntimeTimeline } from "../chat-dialogue/chat-runtime-timeline.ts";
 import type { ChatFrameContracts } from "../chat-dialogue/chat-frame-contracts.ts";
-import { buildConversationPlan, validateConversationPlan, writeConversationPlan, type ConversationPlan } from "../chat-dialogue/conversation-plan.ts";
+import { buildConversationPlan, validateConversationPlan, withProjectChatAvatarUi, writeConversationPlan, type ConversationPlan } from "../chat-dialogue/conversation-plan.ts";
 import type { LyricWordTiming, SectionMapLike } from "../chat-dialogue/line-timing.ts";
 import { buildLyricsLineMap, validateLyricsLineMap, writeLyricsLineMap, type LyricsLineMap } from "../chat-dialogue/lyrics-line-map.ts";
 import { buildSpeakerAttribution, validateSpeakerAttribution, writeSpeakerAttribution, type SpeakerAttribution } from "../chat-dialogue/speaker-attribution.ts";
@@ -18,6 +21,7 @@ import { muxLockedAudio as muxLockedAudioDefault } from "../export/mux-locked-au
 import { buildRenderManifestV4, validateRenderManifestV4, type RenderManifestV4EvidenceRef } from "../export/render-manifest-v4.ts";
 import { sha256File, writeJson } from "../fs-utils.ts";
 import { resolveMediaE2EPythonEnv } from "../media-e2e/python-env.ts";
+import { parseLockedInputSnapshot } from "../project-core/locked-input-snapshot.ts";
 import { buildSectionMapFromEvidence } from "../section-map/section-map-builder.ts";
 import {
   buildVideoChainFrames,
@@ -29,7 +33,6 @@ import {
   type VideoChainDeps,
 } from "../video-chain/video-chain-runner.ts";
 import { runWhisperXAlignment as runWhisperXAlignmentDefault } from "../word-alignment/whisperx-runner.ts";
-import type { QivancePrismaClient } from "../db/prisma-client.ts";
 import type { V5SchedulerTaskHandlerInput, V5SchedulerTaskHandlers } from "./server-runner-loop.ts";
 
 const execFileAsync = promisify(execFileCallback);
@@ -44,6 +47,7 @@ export type V5TaskHandlerDeps = VideoChainDeps & {
   }) => Promise<void>;
   runWhisperXAlignment?: typeof runWhisperXAlignmentDefault;
   renderChatFramesToVisual?: typeof renderChatFramesToVisual;
+  renderChatRuntimeToVisual?: typeof renderChatRuntimeToVisual;
   muxLockedAudio?: typeof muxLockedAudioDefault;
   ffprobeJson?: (filePath: string) => Promise<Record<string, unknown>>;
 };
@@ -97,9 +101,6 @@ async function runTimingPipelineTask({ prisma, task }: V5SchedulerTaskHandlerInp
   if (!validation.ok) throw new Error(`timing_failed: ${validation.issues.join("; ")}`);
 
   const runWhisperXAlignment = deps.runWhisperXAlignment ?? runWhisperXAlignmentDefault;
-  const whisperXCacheDir = process.env.QIVANCE_WHISPERX_CACHE_DIR
-    ?? process.env.HF_HOME
-    ?? path.join(project.projectRoot, ".cache/huggingface");
   await runWhisperXAlignment({
     pythonExecutable: pythonEnv.pythonExecutable,
     scriptPath: path.join(repoRoot, "scripts/python/align-lyrics-whisperx.py"),
@@ -110,7 +111,7 @@ async function runTimingPipelineTask({ prisma, task }: V5SchedulerTaskHandlerInp
     language: process.env.QIVANCE_WHISPERX_LANGUAGE ?? "zh",
     device: pythonEnv.whisperx.device,
     model: pythonEnv.whisperx.model,
-    cacheDir: whisperXCacheDir,
+    cacheDir: pythonEnv.whisperx.cacheDir,
     requireGpu: pythonEnv.whisperx.requireGpu,
     timeoutMs: Number(process.env.QIVANCE_WHISPERX_TIMEOUT_MS ?? 10 * 60 * 1000),
   }).catch((error) => {
@@ -177,29 +178,57 @@ async function buildConversationPlanTask({ prisma, task }: V5SchedulerTaskHandle
     allowDiagnosticFallback: false,
   });
   if (!result.conversationPlan) throw new Error(`conversation_plan_invalid: ${result.issues.join("; ")}`);
-  assertValidation("conversation_plan_invalid", validateConversationPlan({ conversationPlan: result.conversationPlan, lineMap, speakerAttribution }));
-  await writeConversationPlan({ projectRoot: project.projectRoot, conversationPlan: result.conversationPlan });
+  const conversationPlan = await withProjectChatAvatarUi({ projectRoot: project.projectRoot, conversationPlan: result.conversationPlan });
+  assertValidation("conversation_plan_invalid", validateConversationPlan({ conversationPlan, lineMap, speakerAttribution }));
+  await writeConversationPlan({ projectRoot: project.projectRoot, conversationPlan });
 }
 
-async function buildChatFramesTask({ prisma, task }: V5SchedulerTaskHandlerInput): Promise<void> {
+async function buildChatFramesTask({ prisma, task }: V5SchedulerTaskHandlerInput): Promise<{ outputArtifacts: Array<{ path: string; kind?: string }> }> {
   const project = await prisma.project.findUniqueOrThrow({ where: { id: task.projectId } });
   const conversationPlan = await readProjectJson<ConversationPlan>(project.projectRoot, "data/chains/chat_dialogue_mv/conversation_plan.json");
   const sectionMap = await readProjectJson<SectionMapLike>(project.projectRoot, "data/timing/section_map.json");
   const animationPlan = buildChatAnimationPlan({ conversationPlan, durationSec: sectionMap.duration_sec ?? conversationPlan.messages.at(-1)?.end_sec ?? 1 });
   assertValidation("chat_animation_plan_invalid", validateChatAnimationPlan({ conversationPlan, animationPlan }));
   await writeChatAnimationPlan({ projectRoot: project.projectRoot, animationPlan });
-  const frameContracts = buildChatFrameContracts({ projectId: project.id, conversationPlan, animationPlan });
-  assertValidation("chat_frame_contracts_invalid", validateChatFrameContracts({ conversationPlan, frameContracts }));
-  await writeChatFrameContracts({ projectRoot: project.projectRoot, frameContracts });
-  for (const frame of frameContracts.frames) {
-    const html = renderChatFrameHtml({ frame, conversationPlan });
-    assertValidation("chat_frame_html_invalid", validateChatFrameHtml(html));
-    await writeChatFrameHtml({ htmlPath: path.join(project.projectRoot, frame.html_path), frame, conversationPlan });
+  const runtimeTimeline = buildChatRuntimeTimeline({ conversationPlan, animationPlan, fps: 60 });
+  assertValidation("chat_runtime_timeline_invalid", validateChatRuntimeTimeline({ conversationPlan, runtimeTimeline }));
+  await writeChatRuntimeTimeline({ projectRoot: project.projectRoot, runtimeTimeline });
+  const runtimeHtml = renderChatRuntimeHtml({ conversationPlan, animationPlan, runtimeTimeline });
+  assertValidation("chat_runtime_html_invalid", validateChatRuntimeHtml(runtimeHtml));
+  const runtimeHtmlPath = (await writeChatRuntimeHtml({ projectRoot: project.projectRoot, projectId: project.id, html: runtimeHtml })).path;
+  if (process.env.QIVANCE_CHAT_STATIC_FALLBACK === "1") {
+    const frameContracts = buildChatFrameContracts({ projectId: project.id, conversationPlan, animationPlan });
+    assertValidation("chat_frame_contracts_invalid", validateChatFrameContracts({ conversationPlan, frameContracts }));
+    await writeChatFrameContracts({ projectRoot: project.projectRoot, frameContracts });
+    for (const frame of frameContracts.frames) {
+      const html = renderChatFrameHtml({ frame, conversationPlan });
+      assertValidation("chat_frame_html_invalid", validateChatFrameHtml(html));
+      await writeChatFrameHtml({ htmlPath: path.join(project.projectRoot, frame.html_path), frame, conversationPlan });
+    }
   }
+  return {
+    outputArtifacts: [
+      { path: runtimeHtmlPath, kind: "runtime_html" },
+    ],
+  };
 }
 
 async function renderVisualTask({ prisma, task }: V5SchedulerTaskHandlerInput, deps: V5TaskHandlerDeps): Promise<void> {
   const project = await prisma.project.findUniqueOrThrow({ where: { id: task.projectId } });
+  const runtimeTimelinePath = "data/chains/chat_dialogue_mv/runtime_timeline.json";
+  if (await fileExists(path.join(project.projectRoot, runtimeTimelinePath))) {
+    const runtimeTimeline = await readProjectJson<ChatRuntimeTimeline>(project.projectRoot, runtimeTimelinePath);
+    if (runtimeTimeline.render_mode === "browser_recording") {
+      await (deps.renderChatRuntimeToVisual ?? renderChatRuntimeToVisual)({
+        projectRoot: project.projectRoot,
+        runtimeHtmlPath: `video/html-video/.html-video/projects/${project.id}/runtime/chat_dialogue_mv.html`,
+        runtimeTimeline,
+        outputPath: path.join(project.projectRoot, "exports/chat_dialogue_mv/visual.mp4"),
+      });
+      return;
+    }
+  }
+  if (process.env.QIVANCE_CHAT_STATIC_FALLBACK !== "1") throw new Error("chat_runtime_timeline_missing: build runtime_timeline.json before render_visual.");
   const frameContracts = await readProjectJson<ChatFrameContracts>(project.projectRoot, "data/chains/chat_dialogue_mv/frame_contracts.json");
   await (deps.renderChatFramesToVisual ?? renderChatFramesToVisual)({
     projectRoot: project.projectRoot,
@@ -236,20 +265,23 @@ async function writeQaReportTask({ prisma, task }: V5SchedulerTaskHandlerInput, 
 }
 
 async function writeManifestTask({ prisma, run, task }: V5SchedulerTaskHandlerInput, deps: V5TaskHandlerDeps): Promise<void> {
-  const project = await prisma.project.findUniqueOrThrow({
-    where: { id: task.projectId },
-    include: { inputs: true },
-  });
-  await assertLockedInputSha(prisma, project.id);
+  const project = await prisma.project.findUniqueOrThrow({ where: { id: task.projectId } });
+  await assertLockedInputSha(project.projectRoot, run.lockedInputsJson);
   const finalProbe = await ffprobeJson(path.join(project.projectRoot, "exports/chat_dialogue_mv/final.mp4"), deps);
   const audioProbe = await ffprobeJson(path.join(project.projectRoot, "active_music_take.mp3"), deps);
   const audioStreamCount = streamCount(finalProbe, "audio");
   const durationDriftMs = Math.round(Math.abs(probeDurationSec(finalProbe) - probeDurationSec(audioProbe)) * 1000);
+  const frameContractsEvidence = await optionalEvidenceRef(project.projectRoot, "data/chains/chat_dialogue_mv/frame_contracts.json");
   const manifest = buildRenderManifestV4({
     mode: "production",
     runId: run.id,
     conversationPlan: await evidenceRef(project.projectRoot, "data/chains/chat_dialogue_mv/conversation_plan.json"),
-    frameContracts: await evidenceRef(project.projectRoot, "data/chains/chat_dialogue_mv/frame_contracts.json"),
+    ...(frameContractsEvidence ? { frameContracts: frameContractsEvidence } : {}),
+    runtimeTimeline: await evidenceRef(project.projectRoot, "data/chains/chat_dialogue_mv/runtime_timeline.json"),
+    runtimeHtml: await evidenceRef(project.projectRoot, `video/html-video/.html-video/projects/${project.id}/runtime/chat_dialogue_mv.html`),
+    browserRenderEvidence: await evidenceRef(project.projectRoot, "data/chains/chat_dialogue_mv/browser_render_evidence.json"),
+    renderMode: "browser_recording",
+    fps: 60,
     lyrics: await evidenceRef(project.projectRoot, "lyrics.md"),
     audio: await evidenceRef(project.projectRoot, "active_music_take.mp3"),
     timing: {
@@ -286,9 +318,9 @@ async function prepareVideoContextTask({ prisma, task }: V5SchedulerTaskHandlerI
   await prepareVideoChainContext(project, deps);
 }
 
-async function buildVideoFramesTask({ prisma, task }: V5SchedulerTaskHandlerInput, deps: V5TaskHandlerDeps): Promise<void> {
+async function buildVideoFramesTask({ prisma, task }: V5SchedulerTaskHandlerInput, deps: V5TaskHandlerDeps): ReturnType<typeof buildVideoChainFrames> {
   const project = await prisma.project.findUniqueOrThrow({ where: { id: task.projectId } });
-  await buildVideoChainFrames(project, deps);
+  return buildVideoChainFrames(project, deps);
 }
 
 async function renderVideoVisualTask({ prisma, task }: V5SchedulerTaskHandlerInput, deps: V5TaskHandlerDeps): Promise<void> {
@@ -308,7 +340,7 @@ async function writeVideoQaReportTask({ prisma, task }: V5SchedulerTaskHandlerIn
 
 async function writeVideoManifestTask({ prisma, run, task }: V5SchedulerTaskHandlerInput, deps: V5TaskHandlerDeps): Promise<void> {
   const project = await prisma.project.findUniqueOrThrow({ where: { id: task.projectId } });
-  await assertLockedInputSha(prisma, project.id);
+  await assertLockedInputSha(project.projectRoot, run.lockedInputsJson);
   await writeVideoChainManifest(project, run.id, deps);
   await prisma.chain.updateMany({
     where: { projectId: project.id, chainId: "video_chain" },
@@ -320,12 +352,12 @@ async function writeVideoManifestTask({ prisma, run, task }: V5SchedulerTaskHand
   });
 }
 
-async function assertLockedInputSha(prisma: QivancePrismaClient, projectId: string): Promise<void> {
-  const project = await prisma.project.findUniqueOrThrow({ where: { id: projectId }, include: { inputs: true } });
-  for (const input of project.inputs.filter((item) => item.status === "active")) {
-    const stableSha = await sha256File(path.join(project.projectRoot, input.stablePath));
+async function assertLockedInputSha(projectRoot: string, lockedInputsJson: string | null): Promise<void> {
+  const lockedInputs = parseLockedInputSnapshot(lockedInputsJson);
+  for (const input of lockedInputs.inputs) {
+    const stableSha = await sha256File(path.join(projectRoot, input.stable_path));
     if (stableSha !== input.sha256) {
-      throw new Error(`artifact_inconsistent: locked ${input.kind} sha does not match ProjectInput ${input.id}`);
+      throw new Error(`artifact_inconsistent: locked ${input.kind} sha does not match locked input ${input.id}`);
     }
   }
 }
@@ -339,6 +371,14 @@ async function evidenceRef(projectRoot: string, relativePath: string): Promise<R
     path: relativePath,
     sha256: await sha256File(path.join(projectRoot, relativePath)),
   };
+}
+
+async function optionalEvidenceRef(projectRoot: string, relativePath: string): Promise<RenderManifestV4EvidenceRef | undefined> {
+  return await fileExists(path.join(projectRoot, relativePath)) ? evidenceRef(projectRoot, relativePath) : undefined;
+}
+
+async function fileExists(filePath: string): Promise<boolean> {
+  return access(filePath).then(() => true, () => false);
 }
 
 async function runAudioAnalysis(input: {

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { buildConversationPlan, validateConversationPlan } from "../src/lib/chat-dialogue/conversation-plan.ts";
+import { buildConversationPlan, validateConversationPlan, withProjectChatAvatarUi } from "../src/lib/chat-dialogue/conversation-plan.ts";
 import { buildLineTimings } from "../src/lib/chat-dialogue/line-timing.ts";
 import { buildLyricsLineMap } from "../src/lib/chat-dialogue/lyrics-line-map.ts";
 import { buildSpeakerAttribution } from "../src/lib/chat-dialogue/speaker-attribution.ts";
@@ -48,6 +48,17 @@ test("blocks production plan without timing evidence", () => {
   assert.match(result.issues.join("\n"), /lyric_word_timing is required/);
 });
 
+test("injects packaged default avatar profile without requiring project jpgs", async () => {
+  const avatarPlan = await withProjectChatAvatarUi({
+    projectRoot: "/tmp/project-without-avatars",
+    conversationPlan: conversationPlanFixture(),
+  });
+
+  assert.equal(avatarPlan.chat_ui?.contact_avatar_src, "../assets/avatars/1.jpg");
+  assert.equal(avatarPlan.chat_ui?.left_avatar_src, "../assets/avatars/1.jpg");
+  assert.equal(avatarPlan.chat_ui?.right_avatar_src, "../assets/avatars/2.jpg");
+});
+
 test("uses diagnostic fallback only when allowed", () => {
   const lineMap = buildLyricsLineMap({ lyricsText: "问：hello world?\n答：answer now\n" });
   const timings = buildLineTimings({
@@ -82,6 +93,37 @@ test("matches WhisperX text-only word timing in production fallback path", () =>
   assert.equal(timings.timings.length, 2);
 });
 
+test("matches Chinese and mixed Latin WhisperX chunks without whitespace in production timing", () => {
+  const lineMap = buildLyricsLineMap({ lyricsText: "[Intro]\n手机咋比我还会跑腿？\nAI agent把桌上事办到眼前\n写SQL拉数据画出清晨\nRAG翻知识库API打开新门\n" });
+  const timings = buildLineTimings({
+    lineMap,
+    sectionMap: sectionMapFixture(),
+    lyricWordTiming: {
+      words: [
+        { text: "[Intro]", start_sec: 0.1, end_sec: 0.5 },
+        { text: "手机", start_sec: 1.0, end_sec: 1.2 },
+        { text: "咋比", start_sec: 1.2, end_sec: 1.4 },
+        { text: "我还", start_sec: 1.4, end_sec: 1.6 },
+        { text: "会跑", start_sec: 1.6, end_sec: 1.8 },
+        { text: "腿？", start_sec: 1.8, end_sec: 2.0 },
+        { text: "AIagent", start_sec: 2.1, end_sec: 2.3 },
+        { text: "把桌", start_sec: 2.3, end_sec: 2.5 },
+        { text: "上事办", start_sec: 2.5, end_sec: 2.7 },
+        { text: "到眼前", start_sec: 2.7, end_sec: 2.9 },
+        { text: "写SQL拉", start_sec: 3.0, end_sec: 3.2 },
+        { text: "数据画出清晨", start_sec: 3.2, end_sec: 3.6 },
+        { text: "RAG翻知识库API打开新门", start_sec: 3.7, end_sec: 4.0 },
+      ],
+    },
+  });
+
+  assert.deepEqual(timings.issues, []);
+  assert.equal(timings.diagnosticFallbackUsed, false);
+  assert.equal(timings.timings.length, 4);
+  assert.equal(timings.timings[0]?.start_sec, 1.0);
+  assert.equal(timings.timings[3]?.end_sec, 4.0);
+});
+
 function sectionMapFixture() {
   return {
     duration_sec: 4,
@@ -89,4 +131,25 @@ function sectionMapFixture() {
       { section_id: "sec_001", start_sec: 0, end_sec: 4 },
     ],
   };
+}
+
+function conversationPlanFixture() {
+  const lineMap = buildLyricsLineMap({ lyricsText: "问：hello world?\n答：answer now\n", lyricsSha256: "lyrics-sha" });
+  const result = buildConversationPlan({
+    lineMap,
+    speakerAttribution: buildSpeakerAttribution({ lineMap }),
+    lyricWordTiming: {
+      words: [
+        { line_id: "line_001", word: "hello", start_sec: 0.5, end_sec: 0.8 },
+        { line_id: "line_001", word: "world", start_sec: 0.9, end_sec: 1.2 },
+        { line_id: "line_002", word: "answer", start_sec: 1.5, end_sec: 1.8 },
+        { line_id: "line_002", word: "now", start_sec: 1.9, end_sec: 2.2 },
+      ],
+    },
+    sectionMap: sectionMapFixture(),
+    lyricsSha256: "lyrics-sha",
+    audioSha256: "audio-sha",
+  });
+  assert.ok(result.conversationPlan);
+  return result.conversationPlan;
 }

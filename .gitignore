@@ -24,5 +24,8 @@ tmp/
 .venv/
 .venv
 .cache/
+.cache/huggingface/
+.cache/whisperx/
+projects/**/.cache/
 __pycache__/
 scripts/python/__pycache__/

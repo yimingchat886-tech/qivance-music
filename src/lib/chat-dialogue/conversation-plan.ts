@@ -5,6 +5,14 @@ import { buildLineTimings } from "./line-timing.ts";
 import type { LyricsLineMap } from "./lyrics-line-map.ts";
 import type { SpeakerAttribution } from "./speaker-attribution.ts";
 
+export type ChatConversationUiProfile = {
+  contact_name?: string;
+  contact_status?: string;
+  contact_avatar_src?: string;
+  left_avatar_src?: string;
+  right_avatar_src?: string;
+};
+
 export type ConversationPlan = {
   schema_version: 1;
   chain_id: "chat_dialogue_mv";
@@ -23,6 +31,7 @@ export type ConversationPlan = {
   };
   speakers: SpeakerAttribution["speakers"];
   messages: ConversationMessage[];
+  chat_ui?: ChatConversationUiProfile;
 };
 
 export type ConversationMessage = {
@@ -99,6 +108,21 @@ export async function writeConversationPlan(input: {
   const relativePath = "data/chains/chat_dialogue_mv/conversation_plan.json";
   await writeJson(path.join(input.projectRoot, relativePath), input.conversationPlan);
   return { path: relativePath };
+}
+
+export async function withProjectChatAvatarUi(input: {
+  projectRoot: string;
+  conversationPlan: ConversationPlan;
+}): Promise<ConversationPlan> {
+  return {
+    ...input.conversationPlan,
+    chat_ui: {
+      ...input.conversationPlan.chat_ui,
+      contact_avatar_src: "../assets/avatars/1.jpg",
+      left_avatar_src: "../assets/avatars/1.jpg",
+      right_avatar_src: "../assets/avatars/2.jpg",
+    },
+  };
 }
 
 export function validateConversationPlan(input: {

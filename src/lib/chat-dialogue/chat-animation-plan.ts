@@ -31,6 +31,8 @@ export type ChatScrollWindow = {
   visible_message_ids: string[];
 };
 
+const MAX_VISIBLE_MESSAGES = 5;
+
 export function buildChatAnimationPlan(input: {
   conversationPlan: ConversationPlan;
   durationSec?: number;
@@ -44,21 +46,7 @@ export function buildChatAnimationPlan(input: {
     motion: "bubble_pop",
     beat_accent: true,
   }));
-  const bySection = new Map<string, string[]>();
-  for (const message of input.conversationPlan.messages) {
-    const bucket = bySection.get(message.section_id) ?? [];
-    bucket.push(message.id);
-    bySection.set(message.section_id, bucket);
-  }
-  const scrollWindows = [...bySection.entries()].map(([sectionId, messageIds]): ChatScrollWindow => {
-    const messages = input.conversationPlan.messages.filter((message) => messageIds.includes(message.id));
-    return {
-      section_id: sectionId,
-      start_sec: Math.min(...messages.map((message) => message.start_sec)),
-      end_sec: Math.max(...messages.map((message) => message.end_sec)),
-      visible_message_ids: messageIds,
-    };
-  });
+  const scrollWindows = buildScrollWindows(input.conversationPlan.messages, durationSec);
   return {
     schema_version: 1,
     chain_id: "chat_dialogue_mv",
@@ -71,6 +59,43 @@ export function buildChatAnimationPlan(input: {
     message_animations: messageAnimations,
     scroll_windows: scrollWindows,
   };
+}
+
+function buildScrollWindows(messages: ConversationPlan["messages"], durationSec: number): ChatScrollWindow[] {
+  if (messages.length === 0) return [];
+  const scrollWindows: ChatScrollWindow[] = [];
+  const firstMessage = messages[0]!;
+  if (firstMessage.start_sec > 0) {
+    scrollWindows.push({
+      section_id: firstMessage.section_id,
+      start_sec: 0,
+      end_sec: firstMessage.start_sec,
+      visible_message_ids: [],
+    });
+  }
+  const starts = [...new Set(messages.map((message) => message.start_sec))].sort((a, b) => a - b);
+  for (const [startIndex, startSec] of starts.entries()) {
+    const lastVisibleIndex = lastActiveMessageIndex(messages, startSec);
+    if (lastVisibleIndex < 0) continue;
+    const visibleStartIndex = Math.max(0, lastVisibleIndex + 1 - MAX_VISIBLE_MESSAGES);
+    const visibleMessages = messages.slice(visibleStartIndex, lastVisibleIndex + 1);
+    scrollWindows.push({
+      section_id: messages[lastVisibleIndex]!.section_id,
+      start_sec: startSec,
+      end_sec: starts[startIndex + 1] ?? durationSec,
+      visible_message_ids: visibleMessages.map((message) => message.id),
+    });
+  }
+  return scrollWindows;
+}
+
+function lastActiveMessageIndex(messages: ConversationPlan["messages"], startSec: number): number {
+  // ponytail: lyric-line counts are tiny; carry a cursor only if this becomes hot.
+  let lastIndex = -1;
+  for (const [index, message] of messages.entries()) {
+    if (message.start_sec <= startSec) lastIndex = index;
+  }
+  return lastIndex;
 }
 
 export async function writeChatAnimationPlan(input: {

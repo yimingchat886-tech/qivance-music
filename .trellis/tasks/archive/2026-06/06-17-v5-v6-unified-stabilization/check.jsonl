@@ -1,0 +1,5 @@
+{"file": ".trellis/spec/backend/index.md", "reason": "Quality gate index for backend checks and required focused tests."}
+{"file": ".trellis/spec/backend/v5-control-plane-runner-contracts.md", "reason": "Review expected V5/V6 API, scheduler, input, manifest, and Workbench behavior."}
+{"file": ".trellis/spec/backend/v4-chat-scheduler-contracts.md", "reason": "Review scheduler/export evidence and manifest QA consistency."}
+{"file": ".trellis/tasks/06-17-v5-v6-unified-stabilization/prd.md", "reason": "Acceptance criteria for final quality review."}
+{"file": ".trellis/tasks/06-17-v5-v6-unified-stabilization/PLAN.md", "reason": "Patch-level verification plan for final review."}

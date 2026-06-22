@@ -16,6 +16,7 @@ import {
   type RenderManifestV3ProjectMode,
 } from "./lib/export/render-manifest-v3.ts";
 import { sha256File } from "./lib/fs-utils.ts";
+import { buildV5SchedulerTaskSeeds } from "./lib/chain-registry/chain-registry.ts";
 import { createControlPlaneId, listControlPlaneProjects, readControlPlaneProject } from "./lib/db/control-plane.ts";
 import { closeQivancePrismaClient, createQivancePrismaClient } from "./lib/db/prisma-client.ts";
 import { createV5Project } from "./lib/project-core/project-create-v5.ts";
@@ -91,19 +92,18 @@ import { requestV5RunStop } from "./lib/scheduler/db-run-store.ts";
 import { startV5RunnerLoop } from "./lib/scheduler/server-runner-loop.ts";
 import { createV5TaskHandlers } from "./lib/scheduler/v5-task-handlers.ts";
 import { buildChatAnimationPlan, validateChatAnimationPlan, writeChatAnimationPlan, type ChatAnimationPlan } from "./lib/chat-dialogue/chat-animation-plan.ts";
+import { renderChatRuntimeToVisual } from "./lib/chat-dialogue/chat-browser-recorder.ts";
 import { buildChatFrameContracts, validateChatFrameContracts, writeChatFrameContracts, type ChatFrameContracts } from "./lib/chat-dialogue/chat-frame-contracts.ts";
 import { renderChatFrameHtml, validateChatFrameHtml, writeChatFrameHtml } from "./lib/chat-dialogue/chat-frame-html.ts";
 import { renderChatFramesToVisual } from "./lib/chat-dialogue/chat-frame-renderer.ts";
-import { buildConversationPlan, validateConversationPlan, writeConversationPlan, type ConversationPlan } from "./lib/chat-dialogue/conversation-plan.ts";
+import { renderChatRuntimeHtml, validateChatRuntimeHtml, writeChatRuntimeHtml } from "./lib/chat-dialogue/chat-runtime-html.ts";
+import { buildChatRuntimeTimeline, validateChatRuntimeTimeline, writeChatRuntimeTimeline, type ChatRuntimeTimeline } from "./lib/chat-dialogue/chat-runtime-timeline.ts";
+import { buildConversationPlan, validateConversationPlan, withProjectChatAvatarUi, writeConversationPlan, type ConversationPlan } from "./lib/chat-dialogue/conversation-plan.ts";
 import { writeLyricsLineMap, validateLyricsLineMap, type LyricsLineMap } from "./lib/chat-dialogue/lyrics-line-map.ts";
 import { buildSpeakerAttribution, validateSpeakerAttribution, writeSpeakerAttribution, type SpeakerAttribution } from "./lib/chat-dialogue/speaker-attribution.ts";
 import type { LyricWordTiming, SectionMapLike } from "./lib/chat-dialogue/line-timing.ts";
 import {
-  muxVideoChainFinal,
-  renderVideoChainVisual,
   validateVideoChainBackgroundFrames,
-  writeVideoChainManifest,
-  writeVideoChainQaReport,
 } from "./lib/video-chain/video-chain-runner.ts";
 
 const rootDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
@@ -111,6 +111,12 @@ const storageRoot = process.env.QIVANCE_PROJECTS_ROOT ?? path.join(rootDir, "pro
 const port = Number(process.env.PORT ?? 3000);
 const host = process.env.HOST?.trim() || "0.0.0.0";
 const execFileAsync = promisify(execFile);
+const VIDEO_CHAIN_FINAL_EXPORT_PATHS = [
+  "exports/video_chain/visual.mp4",
+  "exports/video_chain/final.mp4",
+  "data/chains/video_chain/qa_report.json",
+  "exports/video_chain/render_manifest.json",
+];
 
 await mkdir(storageRoot, { recursive: true });
 const prisma = await createQivancePrismaClient(storageRoot);
@@ -157,7 +163,7 @@ let shuttingDown = false;
 async function shutdown(): Promise<void> {
   if (shuttingDown) return;
   shuttingDown = true;
-  v5Runner?.stop();
+  await v5Runner?.stop({ drain: true }).catch(() => undefined);
   await closeQivancePrismaClient(prisma).catch(() => undefined);
   server.close(() => process.exit(0));
 }
@@ -343,7 +349,7 @@ async function route(request: IncomingMessage, response: ServerResponse): Promis
   const videoChainExportRenderMatch = url.pathname.match(/^\/api\/projects\/([^/]+)\/chains\/video-chain\/export\/render$/);
   if (request.method === "POST" && videoChainExportRenderMatch) {
     const project = await readRequiredVideoChainProject(videoChainExportRenderMatch[1]);
-    sendJson(response, await renderVideoChainExportForProject(project));
+    sendJson(response, await renderVideoChainExportForProject(project), 202);
     return;
   }
 
@@ -688,6 +694,7 @@ function v5ProjectWorkbenchStatus(status: string): V3ProjectListItem["status"] {
     || status === "input_uploaded"
     || status === "input_confirmed"
     || status === "queued"
+    || status === "ready"
     || status === "running"
     || status === "stopping"
     || status === "stopped"
@@ -788,8 +795,11 @@ async function stopV5RunResponse(rawProjectId: string, rawRunId: string): Promis
 }
 
 function v5InputRouteError(error: unknown): ApiRouteError {
+  const sourceVideoError = sourceVideoImportRouteError(error);
+  if (sourceVideoError) return sourceVideoError;
   const message = error instanceof Error ? error.message : String(error);
   if (/Missing V5 project/.test(message)) return new ApiRouteError(404, "project_not_found", message);
+  if (isMissingInputFileError(message, error)) return new ApiRouteError(409, "input_file_missing", message);
   if (/Confirm inputs requires active/.test(message)) return new ApiRouteError(409, "inputs_incomplete", message);
   if (/queued, running, or stopping/.test(message)) return new ApiRouteError(409, "active_run_exists", message);
   if (/Cannot replace inputs while/.test(message)) return new ApiRouteError(409, "input_replacement_forbidden", message);
@@ -905,10 +915,12 @@ function isWorkbenchMetricMap(value: unknown): value is Record<string, string | 
 
 async function chatDialogueChainStatusResponse(paths: SmallProjectPaths): Promise<Record<string, unknown>> {
   const chainStatus = await readOptionalRecord(path.join(paths.projectRoot, "data/chains/chat_dialogue_mv/chain_status.json"));
-  const [speakerAttribution, conversationPlan, frameContracts] = await Promise.all([
+  const [speakerAttribution, conversationPlan, frameContracts, runtimeTimeline, browserRenderEvidence] = await Promise.all([
     readOptionalRecord(path.join(paths.projectRoot, "data/chains/chat_dialogue_mv/speaker_attribution.json")),
     readOptionalRecord(path.join(paths.projectRoot, "data/chains/chat_dialogue_mv/conversation_plan.json")),
     readOptionalRecord(path.join(paths.projectRoot, "data/chains/chat_dialogue_mv/frame_contracts.json")),
+    readOptionalRecord(path.join(paths.projectRoot, "data/chains/chat_dialogue_mv/runtime_timeline.json")),
+    readOptionalRecord(path.join(paths.projectRoot, "data/chains/chat_dialogue_mv/browser_render_evidence.json")),
   ]);
   const lyricsExists = await projectFileExists(paths.projectRoot, "lyrics.md");
   const audioExists = await projectFileExists(paths.projectRoot, "active_music_take.mp3") || await projectFileExists(paths.projectRoot, projectAudioRelativePath(paths));
@@ -923,11 +935,14 @@ async function chatDialogueChainStatusResponse(paths: SmallProjectPaths): Promis
     status: stringBodyValue(chainStatus?.status) ?? (blockingReasons.length > 0 ? "timing_blocked" : "input_ready"),
     mode: stringBodyValue(chainStatus?.mode) ?? "production",
     blocking_reasons: Array.isArray(chainStatus?.blocking_reasons) ? chainStatus.blocking_reasons : blockingReasons,
-    metrics: isWorkbenchMetricMap(chainStatus?.metrics) ? chainStatus.metrics : chatDialogueChainMetrics({ speakerAttribution, conversationPlan, frameContracts }),
+    metrics: isWorkbenchMetricMap(chainStatus?.metrics) ? chainStatus.metrics : chatDialogueChainMetrics({ speakerAttribution, conversationPlan, frameContracts, runtimeTimeline, browserRenderEvidence }),
     artifacts: isRecord(chainStatus?.artifacts) ? chainStatus.artifacts : {
       lyrics_line_map: await artifactExists(paths.projectRoot, "data/chains/chat_dialogue_mv/lyrics_line_map.json"),
       speaker_attribution: await artifactExists(paths.projectRoot, "data/chains/chat_dialogue_mv/speaker_attribution.json"),
       conversation_plan: await artifactExists(paths.projectRoot, "data/chains/chat_dialogue_mv/conversation_plan.json"),
+      runtime_timeline: await artifactExists(paths.projectRoot, "data/chains/chat_dialogue_mv/runtime_timeline.json"),
+      runtime_html: await artifactExists(paths.projectRoot, `video/html-video/.html-video/projects/${paths.smallProjectId}/runtime/chat_dialogue_mv.html`),
+      browser_render_evidence: await artifactExists(paths.projectRoot, "data/chains/chat_dialogue_mv/browser_render_evidence.json"),
       frame_contracts: await artifactExists(paths.projectRoot, "data/chains/chat_dialogue_mv/frame_contracts.json"),
       render_manifest: await artifactExists(paths.projectRoot, "exports/chat_dialogue_mv/render_manifest.json"),
       final_mp4: await artifactExists(paths.projectRoot, "exports/chat_dialogue_mv/final.mp4"),
@@ -939,13 +954,17 @@ function chatDialogueChainMetrics(input: {
   speakerAttribution: Record<string, unknown> | null;
   conversationPlan: Record<string, unknown> | null;
   frameContracts: Record<string, unknown> | null;
+  runtimeTimeline: Record<string, unknown> | null;
+  browserRenderEvidence: Record<string, unknown> | null;
 }): Record<string, string | number | boolean> {
   const frames = Array.isArray(input.frameContracts?.frames) ? input.frameContracts.frames : [];
   return {
     low_confidence_speaker_count: finiteNumberValue(input.speakerAttribution?.low_confidence_count) ?? 0,
     conversation_message_count: Array.isArray(input.conversationPlan?.messages) ? input.conversationPlan.messages.length : 0,
-    frame_count: frames.length,
-    frame_validation_status: frames.length > 0 ? "ready" : "missing",
+    render_mode: stringBodyValue(input.runtimeTimeline?.render_mode) ?? (frames.length > 0 ? "static_microframes" : "missing"),
+    fps: finiteNumberValue(input.runtimeTimeline?.fps) ?? finiteNumberValue(input.browserRenderEvidence?.fps) ?? 0,
+    frame_count: finiteNumberValue(input.browserRenderEvidence?.frame_count) ?? frames.length,
+    frame_validation_status: input.runtimeTimeline ? "runtime_ready" : frames.length > 0 ? "ready" : "missing",
   };
 }
 
@@ -986,15 +1005,16 @@ async function buildChatConversationPlanForProject(paths: SmallProjectPaths): Pr
     allowDiagnosticFallback: false,
   });
   if (!result.conversationPlan) throw new ApiRouteError(409, "conversation_plan_invalid", result.issues.join("; "));
+  const conversationPlan = await withProjectChatAvatarUi({ projectRoot: paths.projectRoot, conversationPlan: result.conversationPlan });
   assertValidation("conversation_plan_invalid", validateConversationPlan({
-    conversationPlan: result.conversationPlan,
+    conversationPlan,
     lineMap: lineMapResult.lineMap,
     speakerAttribution: speakerResult.speakerAttribution,
   }));
-  const conversationPath = (await writeConversationPlan({ projectRoot: paths.projectRoot, conversationPlan: result.conversationPlan })).path;
+  const conversationPath = (await writeConversationPlan({ projectRoot: paths.projectRoot, conversationPlan })).path;
   await writeChatDialogueChainStatus(paths, "conversation_ready", {
     low_confidence_speaker_count: speakerResult.speakerAttribution.low_confidence_count,
-    conversation_message_count: result.conversationPlan.messages.length,
+    conversation_message_count: conversationPlan.messages.length,
     frame_count: 0,
     frame_validation_status: "missing",
   });
@@ -1008,7 +1028,7 @@ async function buildChatConversationPlanForProject(paths: SmallProjectPaths): Pr
     },
     metrics: {
       low_confidence_speaker_count: speakerResult.speakerAttribution.low_confidence_count,
-      conversation_message_count: result.conversationPlan.messages.length,
+      conversation_message_count: conversationPlan.messages.length,
     },
   };
 }
@@ -1042,28 +1062,44 @@ async function buildChatFramesForProject(paths: SmallProjectPaths): Promise<Reco
   const animationPlan = buildChatAnimationPlan({ conversationPlan, durationSec: sectionMap.duration_sec });
   assertValidation("chat_animation_plan_invalid", validateChatAnimationPlan({ conversationPlan, animationPlan }));
   const animationPath = (await writeChatAnimationPlan({ projectRoot: paths.projectRoot, animationPlan })).path;
-  const frameContracts = buildChatFrameContracts({ projectId: paths.smallProjectId, conversationPlan, animationPlan });
-  assertValidation("chat_frame_contracts_invalid", validateChatFrameContracts({ conversationPlan, frameContracts }));
-  const frameContractsPath = (await writeChatFrameContracts({ projectRoot: paths.projectRoot, frameContracts })).path;
-  for (const frame of frameContracts.frames) {
-    const html = renderChatFrameHtml({ frame, conversationPlan });
-    assertValidation("chat_frame_html_invalid", validateChatFrameHtml(html));
-    await writeChatFrameHtml({ htmlPath: path.join(paths.projectRoot, frame.html_path), frame, conversationPlan });
+  const runtimeTimeline = buildChatRuntimeTimeline({ conversationPlan, animationPlan, fps: 60 });
+  assertValidation("chat_runtime_timeline_invalid", validateChatRuntimeTimeline({ conversationPlan, runtimeTimeline }));
+  const runtimeTimelinePath = (await writeChatRuntimeTimeline({ projectRoot: paths.projectRoot, runtimeTimeline })).path;
+  const runtimeHtml = renderChatRuntimeHtml({ conversationPlan, animationPlan, runtimeTimeline });
+  assertValidation("chat_runtime_html_invalid", validateChatRuntimeHtml(runtimeHtml));
+  const runtimeHtmlPath = (await writeChatRuntimeHtml({ projectRoot: paths.projectRoot, projectId: paths.smallProjectId, html: runtimeHtml })).path;
+  let frameContracts: ChatFrameContracts | undefined;
+  let frameContractsPath: string | undefined;
+  if (process.env.QIVANCE_CHAT_STATIC_FALLBACK === "1") {
+    frameContracts = buildChatFrameContracts({ projectId: paths.smallProjectId, conversationPlan, animationPlan });
+    assertValidation("chat_frame_contracts_invalid", validateChatFrameContracts({ conversationPlan, frameContracts }));
+    frameContractsPath = (await writeChatFrameContracts({ projectRoot: paths.projectRoot, frameContracts })).path;
+    for (const frame of frameContracts.frames) {
+      const html = renderChatFrameHtml({ frame, conversationPlan });
+      assertValidation("chat_frame_html_invalid", validateChatFrameHtml(html));
+      await writeChatFrameHtml({ htmlPath: path.join(paths.projectRoot, frame.html_path), frame, conversationPlan });
+    }
   }
   await writeChatDialogueChainStatus(paths, "frames_ready", {
     low_confidence_speaker_count: speakerAttribution.low_confidence_count,
     conversation_message_count: conversationPlan.messages.length,
-    frame_count: frameContracts.frames.length,
-    frame_validation_status: "ready",
+    render_mode: "browser_recording",
+    fps: runtimeTimeline.fps,
+    frame_count: 0,
+    frame_validation_status: "runtime_ready",
   });
   return {
     small_project_id: paths.smallProjectId,
     chain_id: "chat_dialogue_mv",
     artifacts: {
       animation_plan: await chatFileRef(paths, animationPath),
-      frame_contracts: await chatFileRef(paths, frameContractsPath),
+      runtime_timeline: await chatFileRef(paths, runtimeTimelinePath),
+      runtime_html: await chatFileRef(paths, runtimeHtmlPath),
+      ...(frameContractsPath ? { frame_contracts: await chatFileRef(paths, frameContractsPath) } : {}),
     },
-    frames: frameContracts.frames.map((frame) => ({
+    render_mode: "browser_recording",
+    runtime_html_path: runtimeHtmlPath,
+    frames: (frameContracts?.frames ?? []).map((frame) => ({
       frame_id: frame.frame_id,
       html_path: frame.html_path,
       duration_sec: frame.duration_sec,
@@ -1072,6 +1108,18 @@ async function buildChatFramesForProject(paths: SmallProjectPaths): Promise<Reco
 }
 
 async function chatDialoguePreviewResponse(paths: SmallProjectPaths): Promise<Record<string, unknown>> {
+  const runtimeTimelinePath = "data/chains/chat_dialogue_mv/runtime_timeline.json";
+  const runtimeHtmlPath = `video/html-video/.html-video/projects/${paths.smallProjectId}/runtime/chat_dialogue_mv.html`;
+  if (await projectFileExists(paths.projectRoot, runtimeTimelinePath) && await projectFileExists(paths.projectRoot, runtimeHtmlPath)) {
+    return {
+      small_project_id: paths.smallProjectId,
+      chain_id: "chat_dialogue_mv",
+      render_mode: "browser_recording",
+      runtime_timeline: await chatFileRef(paths, runtimeTimelinePath),
+      runtime_html: await chatFileRef(paths, runtimeHtmlPath),
+      frames: [],
+    };
+  }
   const frameContracts = await readRequiredProjectJson<ChatFrameContracts>(
     paths,
     "data/chains/chat_dialogue_mv/frame_contracts.json",
@@ -1120,21 +1168,37 @@ async function renderChatDialogueExportForProject(paths: SmallProjectPaths): Pro
     "conversation_plan_missing",
     "Build conversation_plan.json before rendering chat dialogue export.",
   );
-  const frameContracts = await readRequiredProjectJson<ChatFrameContracts>(
-    paths,
-    "data/chains/chat_dialogue_mv/frame_contracts.json",
-    "frame_contracts_missing",
-    "Build frame_contracts.json before rendering chat dialogue export.",
-  );
+  const runtimeTimelinePath = "data/chains/chat_dialogue_mv/runtime_timeline.json";
+  const runtimeHtmlPath = `video/html-video/.html-video/projects/${paths.smallProjectId}/runtime/chat_dialogue_mv.html`;
+  const runtimeTimeline = await projectFileExists(paths.projectRoot, runtimeTimelinePath)
+    ? await readRequiredProjectJson<ChatRuntimeTimeline>(paths, runtimeTimelinePath, "runtime_timeline_invalid", "runtime_timeline.json is required for browser recording export.")
+    : null;
   const visualRelativePath = "exports/chat_dialogue_mv/visual.mp4";
   const finalRelativePath = "exports/chat_dialogue_mv/final.mp4";
   const visualPath = path.join(paths.projectRoot, visualRelativePath);
   const finalPath = path.join(paths.projectRoot, finalRelativePath);
-  const renderEvidence = await renderChatFramesToVisual({
-    projectRoot: paths.projectRoot,
-    frameContracts,
-    outputPath: visualPath,
-  });
+  let frameContracts: ChatFrameContracts | undefined;
+  if (runtimeTimeline?.render_mode === "browser_recording") {
+    await renderChatRuntimeToVisual({
+      projectRoot: paths.projectRoot,
+      runtimeHtmlPath,
+      runtimeTimeline,
+      outputPath: visualPath,
+    });
+  } else {
+    if (process.env.QIVANCE_CHAT_STATIC_FALLBACK !== "1") throw new ApiRouteError(409, "runtime_timeline_missing", "Build runtime_timeline.json before rendering chat dialogue export.");
+    frameContracts = await readRequiredProjectJson<ChatFrameContracts>(
+      paths,
+      "data/chains/chat_dialogue_mv/frame_contracts.json",
+      "frame_contracts_missing",
+      "Build frame_contracts.json before rendering chat dialogue export.",
+    );
+    await renderChatFramesToVisual({
+      projectRoot: paths.projectRoot,
+      frameContracts,
+      outputPath: visualPath,
+    });
+  }
   const audioRelativePath = conversationPlan.source.audio_path || await chatDialogueAudioRelativePath(paths);
   const audioPath = path.join(paths.projectRoot, audioRelativePath);
   await muxLockedAudio({ visualMp4Path: visualPath, masterAudioPath: audioPath, finalMp4Path: finalPath });
@@ -1153,13 +1217,21 @@ async function renderChatDialogueExportForProject(paths: SmallProjectPaths): Pro
     audio_stream_count: audioStreamCount,
     duration_drift_ms: durationDriftMs,
     ffprobe: finalProbe,
-    frame_renders: renderEvidence.frame_renders,
+    ...(runtimeTimeline ? { browser_render_evidence: await readOptionalRecord(path.join(paths.projectRoot, "data/chains/chat_dialogue_mv/browser_render_evidence.json")) } : {}),
   });
+  const frameContractsEvidence = frameContracts ? await evidenceRef(paths, "data/chains/chat_dialogue_mv/frame_contracts.json") : undefined;
   const manifest = buildRenderManifestV4({
     mode: "production",
     runId: `api_render_${new Date().toISOString().replaceAll(/[^0-9]+/g, "").slice(0, 14)}`,
     conversationPlan: await evidenceRef(paths, "data/chains/chat_dialogue_mv/conversation_plan.json"),
-    frameContracts: await evidenceRef(paths, "data/chains/chat_dialogue_mv/frame_contracts.json"),
+    ...(frameContractsEvidence ? { frameContracts: frameContractsEvidence } : {}),
+    ...(runtimeTimeline ? {
+      runtimeTimeline: await evidenceRef(paths, runtimeTimelinePath),
+      runtimeHtml: await evidenceRef(paths, runtimeHtmlPath),
+      browserRenderEvidence: await evidenceRef(paths, "data/chains/chat_dialogue_mv/browser_render_evidence.json"),
+      renderMode: "browser_recording" as const,
+      fps: runtimeTimeline.fps,
+    } : {}),
     lyrics: await evidenceRef(paths, "lyrics.md"),
     audio: await evidenceRef(paths, audioRelativePath),
     timing: {
@@ -1185,8 +1257,10 @@ async function renderChatDialogueExportForProject(paths: SmallProjectPaths): Pro
   await writeChatDialogueChainStatus(paths, "passed", {
     low_confidence_speaker_count: finiteNumberValue((await readOptionalRecord(path.join(paths.projectRoot, "data/chains/chat_dialogue_mv/speaker_attribution.json")))?.low_confidence_count) ?? 0,
     conversation_message_count: conversationPlan.messages.length,
-    frame_count: frameContracts.frames.length,
-    frame_validation_status: "ready",
+    render_mode: runtimeTimeline ? "browser_recording" : "static_microframes",
+    fps: runtimeTimeline?.fps ?? 30,
+    frame_count: finiteNumberValue((await readOptionalRecord(path.join(paths.projectRoot, "data/chains/chat_dialogue_mv/browser_render_evidence.json")))?.frame_count) ?? frameContracts?.frames.length ?? 0,
+    frame_validation_status: runtimeTimeline ? "runtime_ready" : "ready",
   });
   return {
     small_project_id: paths.smallProjectId,
@@ -1231,6 +1305,7 @@ async function reviseVideoChainProject(paths: SmallProjectPaths, body: Record<st
     }
     throw new ApiRouteError(409, "video_chain_preview_invalid", backgroundIssues.join("; "));
   }
+  await markVideoChainFinalExportsStaleAfterRevision(paths.smallProjectId);
   return {
     ...result,
     chain_id: "video_chain",
@@ -1239,70 +1314,127 @@ async function reviseVideoChainProject(paths: SmallProjectPaths, body: Record<st
 }
 
 async function renderVideoChainExportForProject(project: V5ProjectWithRelations): Promise<Record<string, unknown>> {
-  const outputPaths = [
-    "exports/video_chain/visual.mp4",
-    "exports/video_chain/final.mp4",
-    "data/chains/video_chain/qa_report.json",
-    "exports/video_chain/render_manifest.json",
-  ];
-  const exportRunId = `api_video_export_${new Date().toISOString().replaceAll(/[^0-9]+/g, "").slice(0, 14)}`;
-  await renderVideoChainVisual(project);
-  await muxVideoChainFinal(project);
-  await writeVideoChainQaReport(project);
-  await writeVideoChainManifest(project, exportRunId);
-  await prisma.artifact.updateMany({
-    where: {
-      projectId: project.id,
-      chainId: "video_chain",
-      status: "current",
-      path: { in: outputPaths },
-    },
-    data: { status: "stale" },
-  });
-  for (const relativePath of outputPaths) {
-    await prisma.artifact.create({
+  if (project.runs.some((run) => ["queued", "running", "stopping"].includes(run.status))) {
+    throw new ApiRouteError(409, "active_run_exists", "Cannot start video_chain export while a queued, running, or stopping run exists.");
+  }
+  const previewRun = await latestVideoChainPreviewRunForExport(project.id);
+  if (!previewRun?.lockedInputsJson) {
+    throw new ApiRouteError(409, "video_chain_preview_required", "A completed locked video_chain preview run is required before export.");
+  }
+  const runId = createControlPlaneId("run");
+  const taskSeeds = buildV5SchedulerTaskSeeds("video_chain", { phase: "export" });
+  await prisma.$transaction(async (tx) => {
+    await tx.schedulerRun.create({
       data: {
-        id: createControlPlaneId("artifact"),
+        id: runId,
         projectId: project.id,
-        chainId: "video_chain",
-        kind: artifactKindFromPath(relativePath),
-        path: relativePath,
-        sha256: await sha256File(path.join(project.projectRoot, relativePath)),
-        schemaVersion: relativePath.endsWith("render_manifest.json") ? "6" : relativePath.endsWith("qa_report.json") ? "1" : null,
-        status: "current",
-        createdByRunId: null,
+        status: "queued",
+        mode: "production_export",
+        priority: 60,
+        lockedInputsJson: previewRun.lockedInputsJson,
+        tasks: {
+          create: taskSeeds.map((seed) => ({
+            id: `${runId}_${seed.stage}`,
+            projectId: project.id,
+            chainId: "video_chain",
+            stage: seed.stage,
+            status: "queued",
+            dependenciesJson: JSON.stringify(seed.dependencies.map((dependency) => `${runId}_${dependency}`)),
+            resourceRequirementsJson: JSON.stringify(seed.resource_requirements),
+            inputArtifactsJson: JSON.stringify([]),
+            outputArtifactsJson: JSON.stringify(seed.output_artifacts),
+          })),
+        },
+        events: {
+          create: {
+            id: createControlPlaneId("event"),
+            eventType: "run_created",
+            message: "V6 video_chain export run created.",
+            detailsJson: JSON.stringify({
+              mode: "production_export",
+              task_phase: "export",
+              copied_locked_inputs_from_run_id: previewRun.id,
+            }),
+          },
+        },
       },
     });
-  }
-  await prisma.chain.updateMany({
-    where: { projectId: project.id, chainId: "video_chain" },
-    data: { status: "passed" },
-  });
-  await prisma.project.update({
-    where: { id: project.id },
-    data: { status: "passed" },
+    await tx.project.update({
+      where: { id: project.id },
+      data: { status: "queued" },
+    });
+    await tx.chain.updateMany({
+      where: { projectId: project.id, chainId: "video_chain" },
+      data: { status: "queued" },
+    });
   });
   return {
     project_id: project.id,
     chain_id: "video_chain",
-    visual_mp4: await v5ProjectFileRef(project, "exports/video_chain/visual.mp4"),
-    final_mp4: await v5ProjectFileRef(project, "exports/video_chain/final.mp4"),
-    qa_report: await v5ProjectFileRef(project, "data/chains/video_chain/qa_report.json"),
-    render_manifest: await v5ProjectFileRef(project, "exports/video_chain/render_manifest.json"),
-    export_policy: "explicit_final_render",
+    run_id: runId,
+    task_count: taskSeeds.length,
+    status: "queued",
+    mode: "production_export",
   };
 }
 
-async function v5ProjectFileRef(project: V5ProjectWithRelations, relativePath: string): Promise<{ exists: true; path: string; sha256: string }> {
-  return {
-    exists: true,
-    path: relativePath,
-    sha256: await sha256File(path.join(project.projectRoot, relativePath)),
-  };
+async function latestVideoChainPreviewRunForExport(projectId: string): Promise<{ id: string; lockedInputsJson: string | null } | null> {
+  return prisma.schedulerRun.findFirst({
+    where: {
+      projectId,
+      lockedInputsJson: { not: null },
+      tasks: {
+        some: {
+          chainId: "video_chain",
+          stage: "build_video_frames",
+          status: "passed",
+        },
+      },
+    },
+    orderBy: { createdAt: "desc" },
+    select: {
+      id: true,
+      lockedInputsJson: true,
+    },
+  });
 }
 
-function artifactKindFromPath(relativePath: string): string {
-  return path.basename(relativePath).replace(/\.[^.]+$/, "");
+async function markVideoChainFinalExportsStaleAfterRevision(projectId: string): Promise<void> {
+  const latestRun = await prisma.schedulerRun.findFirst({
+    where: {
+      projectId,
+      tasks: {
+        some: {
+          chainId: "video_chain",
+        },
+      },
+    },
+    orderBy: { createdAt: "desc" },
+    select: { id: true },
+  });
+  const stale = await prisma.artifact.updateMany({
+    where: {
+      projectId,
+      chainId: "video_chain",
+      status: "current",
+      path: { in: VIDEO_CHAIN_FINAL_EXPORT_PATHS },
+    },
+    data: { status: "stale" },
+  });
+  if (latestRun) {
+    await prisma.schedulerEvent.create({
+      data: {
+        id: createControlPlaneId("event"),
+        runId: latestRun.id,
+        eventType: "video_chain_export_artifacts_staled",
+        message: "V6 revision marked current final export artifacts stale.",
+        detailsJson: JSON.stringify({
+          stale_artifact_count: stale.count,
+          paths: VIDEO_CHAIN_FINAL_EXPORT_PATHS,
+        }),
+      },
+    });
+  }
 }
 
 async function writeChatDialogueChainStatus(paths: SmallProjectPaths, status: string, metrics: Record<string, string | number | boolean>): Promise<void> {
@@ -1319,6 +1451,9 @@ async function writeChatDialogueChainStatus(paths: SmallProjectPaths, status: st
       speaker_attribution: await artifactExists(paths.projectRoot, "data/chains/chat_dialogue_mv/speaker_attribution.json"),
       conversation_plan: await artifactExists(paths.projectRoot, "data/chains/chat_dialogue_mv/conversation_plan.json"),
       animation_plan: await artifactExists(paths.projectRoot, "data/chains/chat_dialogue_mv/animation_plan.json"),
+      runtime_timeline: await artifactExists(paths.projectRoot, "data/chains/chat_dialogue_mv/runtime_timeline.json"),
+      runtime_html: await artifactExists(paths.projectRoot, `video/html-video/.html-video/projects/${paths.smallProjectId}/runtime/chat_dialogue_mv.html`),
+      browser_render_evidence: await artifactExists(paths.projectRoot, "data/chains/chat_dialogue_mv/browser_render_evidence.json"),
       frame_contracts: await artifactExists(paths.projectRoot, "data/chains/chat_dialogue_mv/frame_contracts.json"),
       qa_report: await artifactExists(paths.projectRoot, "data/chains/chat_dialogue_mv/qa_report.json"),
       render_manifest: await artifactExists(paths.projectRoot, "exports/chat_dialogue_mv/render_manifest.json"),
@@ -1679,9 +1814,7 @@ async function importSourceVideoForProject(paths: SmallProjectPaths, body: Recor
       },
     };
   } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    const status = /remote url/i.test(message) || /mp4 files only/i.test(message) ? 400 : 409;
-    throw new ApiRouteError(status, "source_video_import_failed", message);
+    throw sourceVideoImportRouteError(error) ?? new ApiRouteError(409, "source_video_import_failed", error instanceof Error ? error.message : String(error));
   }
 }
 
@@ -2653,4 +2786,25 @@ class ApiRouteError extends Error {
 function toRouteError(error: unknown): ApiRouteError {
   if (error instanceof ApiRouteError) return error;
   return new ApiRouteError(500, "internal_error", error instanceof Error ? error.message : String(error));
+}
+
+function sourceVideoImportRouteError(error: unknown): ApiRouteError | null {
+  const message = error instanceof Error ? error.message : String(error);
+  if (!isSourceVideoImportError(message)) return null;
+  return new ApiRouteError(sourceVideoImportStatus(message), "source_video_import_failed", message);
+}
+
+function isSourceVideoImportError(message: string): boolean {
+  return /Source video|source video|ffprobe|Invalid data found|moov atom|Error opening input|could not read/i.test(message);
+}
+
+function sourceVideoImportStatus(message: string): 400 | 409 {
+  if (/Remote URL|accepts MP4 files only|destination must be project-relative|destination must be an MP4 path/i.test(message)) {
+    return 400;
+  }
+  return 409;
+}
+
+function isMissingInputFileError(message: string, error: unknown): boolean {
+  return (error as NodeJS.ErrnoException).code === "ENOENT" || /ENOENT|No such file/i.test(message);
 }

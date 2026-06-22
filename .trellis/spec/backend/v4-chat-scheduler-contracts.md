@@ -29,7 +29,19 @@
 - Chain id is always `chat_dialogue_mv`.
 - Chain artifacts stay under `data/chains/chat_dialogue_mv/**`.
 - Chain exports stay under `exports/chat_dialogue_mv/**`.
-- Chat HTML frames stay under `video/html-video/.html-video/projects/<project_id>/frames/**`.
+- Runtime chat HTML stays under `video/html-video/.html-video/projects/<project_id>/runtime/chat_dialogue_mv.html`.
+- Production visual rendering uses browser recording:
+  - `runtime_timeline.json` is the source of truth for browser playback state.
+  - JS schedules absolute `at_sec` events from `runtime_timeline.json` and toggles classes only.
+  - CSS owns bubble pop, read receipt, avatar, and header typing motion using `transform`, `opacity`, and `visibility`.
+  - Browser recording captures the runtime page at 60fps and writes `exports/chat_dialogue_mv/visual.mp4`.
+  - `browser_render_evidence.json` records fps, frame count, runtime HTML path, output path, and visual sha.
+- Static chat HTML frames stay under `video/html-video/.html-video/projects/<project_id>/frames/**` only when fallback/debug mode is explicitly enabled.
+- `frame_contracts.json` is fallback/debug static screenshot UI state only:
+  - `scroll_windows` stay logical and only decide `visible_message_ids`.
+  - each frame carries `ui_state.header.phase`, optional `entering_message_id` / `enter_progress`, and optional `read_receipt`.
+  - CSS pop, read receipt, and header typing motion are driven by explicit frame progress and paused CSS keyframes, not JS timelines or Chrome virtual time.
+  - right-side read receipts target only the nearest right/questioner message that is followed by a left reply; the receipt avatar uses the left avatar image (`../assets/avatars/1.jpg` by default).
 - Scheduler coordination state stays under `scheduler/**` and `projects/<project_id>/data/scheduler/**`.
 - Scheduler state does not replace project artifact validation; project artifacts remain the acceptance source.
 - Production export must write:
@@ -37,7 +49,7 @@
   - `exports/chat_dialogue_mv/final.mp4`
   - `exports/chat_dialogue_mv/render_manifest.json`
   - `data/chains/chat_dialogue_mv/qa_report.json`
-- `render_manifest.json` uses schema version `4`, records input/output sha evidence, and rejects diagnostic/fallback success in production.
+- `render_manifest.json` uses schema version `4`, records runtime timeline/html/browser render evidence for browser recording, records `frame_contracts` only for static fallback/debug, and rejects diagnostic/fallback success in production.
 - `qa_report.json` records ffprobe evidence, exactly one audio stream, duration drift, and frame render evidence.
 
 ### 4. Validation & Error Matrix
@@ -46,7 +58,8 @@
 - Missing active audio -> chain status includes `audio_missing`.
 - Missing timing bundle -> chain status includes `timing_missing`.
 - Missing `conversation_plan.json` before frame build/export -> `409 conversation_plan_missing`.
-- Missing `frame_contracts.json` before preview/export -> `409 frame_contracts_missing`.
+- Missing `runtime_timeline.json` before browser recording export -> `409 runtime_timeline_missing`.
+- Missing `frame_contracts.json` before static fallback preview/export -> `409 frame_contracts_missing`.
 - Invalid chain revision request without `request` -> `400 invalid_chat_revision_request`.
 - Final MP4 with audio stream count not equal to 1 -> `409 chat_export_audio_stream_invalid`.
 - Final MP4 duration drift over 150ms -> `409 chat_export_duration_drift`.
@@ -56,7 +69,7 @@
 
 ### 5. Good/Base/Bad Cases
 
-- Good: project has `lyrics.md`, locked audio, timing bundle, builds conversation plan, builds frames, renders visual, muxes final audio, writes v4 manifest and QA.
+- Good: project has `lyrics.md`, locked audio, timing bundle, builds conversation plan, builds runtime timeline and runtime HTML, records browser-rendered visual MP4, muxes final audio, writes v4 manifest and QA.
 - Base: project is input-ready but has no chain artifacts; `/run` creates scheduler plan and status exposes ready/blocked counts.
 - Bad: export tries to use diagnostic or fallback success as production success; manifest validation must reject it.
 
@@ -74,8 +87,11 @@
   - `tests/chat-speaker-attribution.test.ts`
   - `tests/chat-conversation-plan.test.ts`
   - `tests/chat-animation-plan.test.ts`
-  - `tests/chat-frame-contracts.test.ts`
+  - `tests/chat-frame-contracts.test.ts` with assertions for positive frame durations, total duration, `ui_state` progress ranges, receipt target rules, paused CSS keyframes, and receipt avatar source
   - `tests/chat-frame-renderer.test.ts`
+  - `tests/chat-runtime-timeline.test.ts`
+  - `tests/chat-runtime-html.test.ts`
+  - `tests/chat-browser-recorder.test.ts`
 - API/export/workbench:
   - `tests/chat-chain-api.test.ts`
   - `tests/render-manifest-v4.test.ts`
@@ -97,5 +113,5 @@
 
 - Write chat export files only under `exports/chat_dialogue_mv/**`.
 - Validate project artifacts and render manifest before reporting success.
-- Render local HTML chat frames to `visual.mp4`, mux locked audio to `final.mp4`, and record ffprobe QA.
+- Render local runtime chat HTML to `visual.mp4` through browser recording, mux locked audio to `final.mp4`, and record ffprobe QA.
 - Acquire resource locks before running scheduler tasks, write task events, and release locks after pass/fail.

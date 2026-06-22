@@ -33,23 +33,37 @@ test("V5 registry generates deterministic scheduler task seeds", () => {
   assert.deepEqual(seeds[1]?.dependencies, ["run_timing_pipeline"]);
   assert.deepEqual(seeds.at(-1)?.dependencies, ["qa_report"]);
   assert.ok(seeds[0]?.output_artifacts.includes("data/timing/section_map.json"));
+  assert.ok(seeds[4]?.output_artifacts.includes("data/chains/chat_dialogue_mv/runtime_timeline.json"));
+  assert.ok(seeds[4]?.output_artifacts.includes("video/html-video/.html-video/projects/<project_id>/runtime/chat_dialogue_mv.html"));
+  assert.equal(seeds[4]?.output_artifacts.includes("data/chains/chat_dialogue_mv/frame_contracts.json"), false);
   assert.ok(seeds.at(-1)?.output_artifacts.includes("exports/chat_dialogue_mv/render_manifest.json"));
 });
 
-test("V5 registry generates video_chain scheduler task seeds", () => {
+test("V5 registry generates video_chain preview scheduler task seeds by default", () => {
   const seeds = buildV5SchedulerTaskSeeds("video_chain");
   assert.deepEqual(seeds.map((seed) => seed.stage), [
     "run_timing_pipeline",
     "prepare_video_context",
     "build_video_frames",
+  ]);
+  assert.deepEqual(seeds[1]?.dependencies, ["run_timing_pipeline"]);
+  assert.deepEqual(seeds.at(-1)?.dependencies, ["prepare_video_context"]);
+  assert.ok(seeds[2]?.resource_requirements.includes("html_video_agent"));
+  assert.ok(seeds[2]?.output_artifacts.includes("data/chains/video_chain/frame_contracts.json"));
+  assert.equal(seeds.some((seed) => seed.stage === "render_video_visual"), false);
+  assert.equal(seeds.some((seed) => seed.output_artifacts.includes("exports/video_chain/render_manifest.json")), false);
+});
+
+test("V5 registry generates video_chain export scheduler task seeds by phase", () => {
+  const seeds = buildV5SchedulerTaskSeeds("video_chain", { phase: "export" });
+  assert.deepEqual(seeds.map((seed) => seed.stage), [
     "render_video_visual",
     "mux_video_final",
     "video_qa_report",
     "write_video_manifest",
   ]);
-  assert.deepEqual(seeds[1]?.dependencies, ["run_timing_pipeline"]);
+  assert.deepEqual(seeds[0]?.dependencies, []);
+  assert.deepEqual(seeds[1]?.dependencies, ["render_video_visual"]);
   assert.deepEqual(seeds.at(-1)?.dependencies, ["video_qa_report"]);
-  assert.ok(seeds[2]?.resource_requirements.includes("html_video_agent"));
-  assert.ok(seeds[2]?.output_artifacts.includes("data/chains/video_chain/frame_contracts.json"));
   assert.ok(seeds.at(-1)?.output_artifacts.includes("exports/video_chain/render_manifest.json"));
 });

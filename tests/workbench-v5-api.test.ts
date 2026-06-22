@@ -4,6 +4,9 @@ import { mkdtemp, stat } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import test from "node:test";
+import { closeQivancePrismaClient, createQivancePrismaClient } from "../src/lib/db/prisma-client.ts";
+import { confirmV5ProjectInputs, uploadV5ProjectInputs } from "../src/lib/project-core/project-inputs-v5.ts";
+import { SOURCE_VIDEO_FIXTURE_PROBE } from "./source-video-fixture.ts";
 
 const serverPath = fileURLToPath(new URL("../src/server.ts", import.meta.url));
 
@@ -11,6 +14,7 @@ test("V5 API creates DB-backed projects and exposes them through list/detail", a
   const tempRoot = await mkdtemp(path.join("/tmp", "qivance-workbench-v5-api-"));
   const storageRoot = path.join(tempRoot, "projects");
   const port = await getFreePort();
+  let apiPrisma: Awaited<ReturnType<typeof createQivancePrismaClient>> | null = null;
   const server = spawn(process.execPath, ["--experimental-strip-types", serverPath], {
     cwd: tempRoot,
     env: {
@@ -145,6 +149,77 @@ test("V5 API creates DB-backed projects and exposes them through list/detail", a
     assert.equal(videoPageResponse.status, 200);
     assert.match(await videoPageResponse.text(), /v6_video_chain/);
 
+    const missingPreviewExportResponse = await fetch(`${baseUrl}/api/projects/${videoCreated.project_id}/chains/video-chain/export/render`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: "{}",
+    });
+    assert.equal(missingPreviewExportResponse.status, 409);
+    assert.equal((await missingPreviewExportResponse.json()).error.code, "video_chain_preview_required");
+
+    apiPrisma = await createQivancePrismaClient(storageRoot);
+    await uploadV5ProjectInputs(apiPrisma, videoCreated.project_id, {
+      lyricsText: "line one\nline two\n",
+      audioFile: { filename: "take.mp3", mimeType: "audio/mpeg", data: Buffer.from([1, 2, 3]) },
+      videoFile: { filename: "background.mp4", mimeType: "video/mp4", data: Buffer.from([4, 5, 6]) },
+    });
+    const videoPreview = await confirmV5ProjectInputs(apiPrisma, videoCreated.project_id, {
+      probeSourceVideo: async () => ({ ...SOURCE_VIDEO_FIXTURE_PROBE, hasAudioStream: false, audioStreamCount: 0, audio: undefined }),
+    });
+    await apiPrisma.schedulerTask.updateMany({
+      where: { runId: videoPreview.run_id },
+      data: { status: "passed", finishedAt: new Date() },
+    });
+    await apiPrisma.schedulerRun.update({
+      where: { id: videoPreview.run_id },
+      data: { status: "ready" },
+    });
+    await apiPrisma.project.update({
+      where: { id: videoCreated.project_id },
+      data: { status: "ready" },
+    });
+    await apiPrisma.chain.updateMany({
+      where: { projectId: videoCreated.project_id, chainId: "video_chain" },
+      data: { status: "ready" },
+    });
+
+    const exportResponse = await fetch(`${baseUrl}/api/projects/${videoCreated.project_id}/chains/video-chain/export/render`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: "{}",
+    });
+    assert.equal(exportResponse.status, 202);
+    const exportRun = await exportResponse.json();
+    assert.match(exportRun.run_id, /^run_/);
+    assert.equal(exportRun.status, "queued");
+    assert.equal(exportRun.mode, "production_export");
+    assert.equal(exportRun.task_count, 4);
+
+    const previewRun = await apiPrisma.schedulerRun.findUniqueOrThrow({ where: { id: videoPreview.run_id } });
+    const storedExportRun = await apiPrisma.schedulerRun.findUniqueOrThrow({
+      where: { id: exportRun.run_id },
+      include: { tasks: true, events: true },
+    });
+    assert.equal(storedExportRun.lockedInputsJson, previewRun.lockedInputsJson);
+    assert.deepEqual(storedExportRun.tasks.map((task) => task.stage).sort(), [
+      "mux_video_final",
+      "render_video_visual",
+      "video_qa_report",
+      "write_video_manifest",
+    ].sort());
+    assert.equal(storedExportRun.events[0]?.eventType, "run_created");
+    assert.equal(await apiPrisma.artifact.count({
+      where: {
+        projectId: videoCreated.project_id,
+        path: { in: [
+          "exports/video_chain/visual.mp4",
+          "exports/video_chain/final.mp4",
+          "data/chains/video_chain/qa_report.json",
+          "exports/video_chain/render_manifest.json",
+        ] },
+      },
+    }), 0);
+
     const invalidResponse = await fetch(`${baseUrl}/api/projects`, {
       method: "POST",
       headers: { "content-type": "application/json" },
@@ -153,6 +228,7 @@ test("V5 API creates DB-backed projects and exposes them through list/detail", a
     assert.equal(invalidResponse.status, 400);
     assert.equal((await invalidResponse.json()).error.code, "unsupported_content_type");
   } finally {
+    if (apiPrisma) await closeQivancePrismaClient(apiPrisma);
     await stopServer(server);
   }
 });
