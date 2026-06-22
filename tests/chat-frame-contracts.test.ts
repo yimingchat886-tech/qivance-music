@@ -4,7 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 import { buildChatAnimationPlan } from "../src/lib/chat-dialogue/chat-animation-plan.ts";
-import { buildChatFrameContracts, validateChatFrameContracts } from "../src/lib/chat-dialogue/chat-frame-contracts.ts";
+import { buildChatFrameContracts, validateChatFrameContracts, type ChatFrameUiState } from "../src/lib/chat-dialogue/chat-frame-contracts.ts";
 import { renderChatFrameHtml, validateChatFrameHtml, writeChatFrameHtml } from "../src/lib/chat-dialogue/chat-frame-html.ts";
 import { buildConversationPlan } from "../src/lib/chat-dialogue/conversation-plan.ts";
 import { buildLyricsLineMap } from "../src/lib/chat-dialogue/lyrics-line-map.ts";
@@ -21,37 +21,60 @@ test("builds local-only chat frame contracts and HTML", () => {
 
   assert.equal(validateChatFrameContracts({ conversationPlan, frameContracts }).ok, true);
   assert.equal(frameContracts.frames[0]?.html_path, "video/html-video/.html-video/projects/demo_project/frames/chat_dialogue_mv_001.html");
-  assert.equal(frameContracts.frames.reduce((sum, frame) => sum + frame.duration_sec, 0), 4);
-  assert.deepEqual(frameContracts.frames.map((frame) => frame.message_ids), [[], ["msg_001"], ["msg_001", "msg_002"]]);
-  assert.deepEqual(frameContracts.frames.map((frame) => frame.duration_sec), [0.5, 1, 2.5]);
+  assert.equal(totalDuration(frameContracts.frames), 4);
+  assert.equal(frameContracts.frames.every((frame) => frame.duration_sec > 0), true);
+  assert.equal(frameContracts.frames.some((frame) => frame.message_ids.includes("msg_001")), true);
+  assert.equal(frameContracts.frames.some((frame) => frame.message_ids.includes("msg_002")), true);
+  assert.equal(frameContracts.frames.every((frame) => frame.ui_state.header), true);
+
+  const rightEnteringFrames = frameContracts.frames.filter((frame) => frame.ui_state.entering_message_id === "msg_001");
+  assert.ok(rightEnteringFrames.length > 1);
+  assertMonotonic(rightEnteringFrames.map((frame) => frame.ui_state.enter_progress ?? -1));
+  assert.ok(rightEnteringFrames.every((frame) => (frame.ui_state.enter_progress ?? -1) >= 0 && (frame.ui_state.enter_progress ?? 2) <= 1));
+
+  const receiptStates = statesForReceipt(frameContracts.frames, "msg_001");
+  assert.deepEqual(receiptStates, ["hidden", "in", "on", "out", "hidden"]);
+
+  const timedFrames = withStartTimes(frameContracts.frames);
+  const firstLeftPopFrame = timedFrames.find(({ frame }) => frame.ui_state.entering_message_id === "msg_002" && (frame.ui_state.enter_progress ?? 0) > 0);
+  assert.ok(firstLeftPopFrame);
+  assert.ok(Math.abs(firstLeftPopFrame.startSec - 1.54) <= 1 / 30 + 0.001);
+  assert.ok(frameContracts.frames.some((frame) => frame.ui_state.header.phase === "typing-in"));
+  assert.ok(frameContracts.frames.some((frame) => frame.ui_state.header.phase === "typing-on"));
+  assert.ok(frameContracts.frames.some((frame) => frame.ui_state.header.phase === "typing-out"));
+  assert.equal(frameContracts.frames.at(-1)?.ui_state.header.phase, "default");
 
   const preLyricHtml = renderChatFrameHtml({ frame: frameContracts.frames[0]!, conversationPlan });
   const preLyricValidation = validateChatFrameHtml(preLyricHtml);
   assert.equal(preLyricValidation.ok, true, preLyricValidation.issues.join("\n"));
   assert.doesNotMatch(preLyricHtml, /data-message-id=/);
 
-  const html = renderChatFrameHtml({ frame: frameContracts.frames.at(-1)!, conversationPlan });
+  const html = renderChatFrameHtml({ frame: frameContracts.frames.find((frame) => frame.ui_state.read_receipt?.state === "on")!, conversationPlan });
   const validation = validateChatFrameHtml(html);
   assert.equal(validation.ok, true, validation.issues.join("\n"));
   assert.match(html, /hello world\?/);
-  assert.match(html, /<div class="name">对方正在输入\.\.\.\.<\/div>/);
-  assert.doesNotMatch(html, /<div class="name">蒲涛<\/div>/);
+  assert.match(html, /class="name title-name peer-name">蒲涛<\/div>/);
+  assert.match(html, /class="name title-name typing-name">对方正在输入\.\.\.\.<\/div>/);
   assert.match(html, /data-douyin-chat-shell/);
   assert.doesNotMatch(html, /class="status-bar"|15:30|battery/);
+  assert.match(html, /@keyframes bubbleFloatPop/);
+  assert.match(html, /animation-play-state:\s*paused/);
   assert.match(html, /\.\.\/assets\/status_bar_icons\/back_arrow\.png/);
   assert.match(html, /\.\.\/assets\/status_bar_icons\/avatar_online\.png/);
   assert.match(html, /\.\.\/assets\/status_bar_icons\/video_camera\.png/);
   assert.match(html, /\.\.\/assets\/status_bar_icons\/more_ellipsis\.png/);
   assert.match(html, /class="header-avatar-wrap"/);
   assert.match(html, /data-avatar-role="contact"/);
-  assert.match(html, /class="avatar-slot message-avatar avatar-left"/);
   assert.match(html, /class="avatar-slot message-avatar avatar-right"/);
+  const leftVisibleHtml = renderChatFrameHtml({ frame: frameContracts.frames.find((frame) => frame.message_ids.includes("msg_002"))!, conversationPlan });
+  assert.match(leftVisibleHtml, /class="avatar-slot message-avatar avatar-left"/);
   assert.match(html, /为保障用户沟通安全/);
   assert.match(html, />15:31</);
   assert.match(html, /justify-content:\s*flex-start/);
   assert.match(html, /background:\s*#ffffff/);
   assert.match(html, /background:\s*#4f7aff/);
-  assert.match(html, /class="read-receipt"/);
+  assert.match(html, /class="read-receipt receipt-on"/);
+  assert.match(html, /class="receipt-avatar avatar-slot"><img class="avatar-img" src="\.\.\/assets\/avatars\/1\.jpg"/);
   assert.doesNotMatch(html, /quick-actions|composer|发消息或按住说话/);
   assert.doesNotMatch(html, /#743df2|#1689ff/);
   assert.doesNotMatch(html, /https?:\/\//);
@@ -77,13 +100,15 @@ test("uses configurable contact profile and typing title for newly visible left 
       duration_sec: 1,
       section_ids: ["sec_001"],
       message_ids: ["msg_001"],
+      ui_state: { header: { phase: "default" } },
       text_policy: "verbatim_lyrics",
       forbidden_remote_resources: true,
     },
     conversationPlan: customPlan,
   });
-  assert.match(rightHtml, /<div class="name">林同学<\/div>/);
-  assert.doesNotMatch(rightHtml, /对方正在输入/);
+  assert.match(rightHtml, /class="title title-slot header-default"/);
+  assert.match(rightHtml, /class="name title-name peer-name">林同学<\/div>/);
+  assert.match(rightHtml, /class="name title-name typing-name">对方正在输入\.\.\.\.<\/div>/);
   assert.match(rightHtml, /src="\.\.\/assets\/avatars\/1\.jpg"/);
   assert.match(rightHtml, /src="\.\.\/assets\/avatars\/2\.jpg"/);
   assert.equal(readReceiptCount(rightHtml), 0);
@@ -95,15 +120,22 @@ test("uses configurable contact profile and typing title for newly visible left 
       duration_sec: 1,
       section_ids: ["sec_001"],
       message_ids: ["msg_001", "msg_002"],
+      ui_state: {
+        header: { phase: "typing-on", progress: 1 },
+        read_receipt: { message_id: "msg_001", state: "out", progress: 0 },
+      },
       text_policy: "verbatim_lyrics",
       forbidden_remote_resources: true,
     },
     conversationPlan: customPlan,
   });
-  assert.match(leftHtml, /<div class="name">对方正在输入\.\.\.\.<\/div>/);
-  assert.doesNotMatch(leftHtml, /<div class="name">林同学<\/div>/);
+  assert.match(leftHtml, /class="title title-slot header-typing-on"/);
+  assert.match(leftHtml, /class="name title-name peer-name">林同学<\/div>/);
+  assert.match(leftHtml, /class="name title-name typing-name">对方正在输入\.\.\.\.<\/div>/);
   assert.match(leftHtml, /data-message-id="msg_002"/);
   assert.equal(readReceiptCount(leftHtml), 1);
+  assert.match(leftHtml, /class="read-receipt receipt-out"/);
+  assert.match(leftHtml, /class="receipt-avatar avatar-slot"><img class="avatar-img" src="\.\.\/assets\/avatars\/1\.jpg"/);
 });
 
 test("renders read receipts by visible answer state and writes local assets", async () => {
@@ -120,10 +152,10 @@ test("renders read receipts by visible answer state and writes local assets", as
     ],
   };
   const rightOnlyFrame = frameFixture(["msg_001"]);
-  const answeredFrame = frameFixture(["msg_001", "msg_002"]);
+  const answeredFrame = frameFixture(["msg_001", "msg_002"], { read_receipt: { message_id: "msg_001", state: "on" } });
   const rightLeftRightFrame = frameFixture(["msg_001", "msg_002", "custom_right_1"]);
-  const rightRightLeftFrame = frameFixture(["msg_001", "custom_right_1", "custom_left_1"]);
-  const allFrame = frameFixture(fourMessagePlan.messages.map((message) => message.id));
+  const rightRightLeftFrame = frameFixture(["msg_001", "custom_right_1", "custom_left_1"], { read_receipt: { message_id: "custom_right_1", state: "on" } });
+  const allFrame = frameFixture(fourMessagePlan.messages.map((message) => message.id), { read_receipt: { message_id: "custom_right_1", state: "on" } });
 
   const rightOnlyHtml = renderChatFrameHtml({ frame: rightOnlyFrame, conversationPlan: fourMessagePlan });
   assert.equal(validateChatFrameHtml(rightOnlyHtml).ok, true);
@@ -138,6 +170,7 @@ test("renders read receipts by visible answer state and writes local assets", as
   const rightRightLeftHtml = renderChatFrameHtml({ frame: rightRightLeftFrame, conversationPlan: fourMessagePlan });
   assert.equal(readReceiptCount(rightRightLeftHtml), 1);
   assert.match(rightRightLeftHtml, /data-message-id="custom_right_1"/);
+  assert.match(rightRightLeftHtml, /class="receipt-avatar avatar-slot"><img class="avatar-img" src="\.\.\/assets\/avatars\/1\.jpg"/);
 
   const html = renderChatFrameHtml({ frame: allFrame, conversationPlan: fourMessagePlan });
   assert.match(html, /class="time-marker inline"[^>]*>刚刚<\/div>/);
@@ -156,13 +189,14 @@ test("renders read receipts by visible answer state and writes local assets", as
   }
 });
 
-function frameFixture(messageIds: string[]) {
+function frameFixture(messageIds: string[], uiState: Partial<ChatFrameUiState> = {}) {
   return {
     frame_id: "custom_all_frame",
     html_path: "video/html-video/.html-video/projects/demo_project/frames/custom_all_frame.html",
     duration_sec: 1,
     section_ids: ["sec_001"],
     message_ids: messageIds,
+    ui_state: { header: { phase: "default" }, ...uiState },
     text_policy: "verbatim_lyrics" as const,
     forbidden_remote_resources: true as const,
   };
@@ -202,5 +236,33 @@ function conversationFixture() {
 }
 
 function readReceiptCount(html: string): number {
-  return html.match(/class="read-receipt"/g)?.length ?? 0;
+  return html.match(/class="read-receipt\b/g)?.length ?? 0;
+}
+
+function totalDuration(frames: { duration_sec: number }[]): number {
+  return Number(frames.reduce((sum, frame) => sum + frame.duration_sec, 0).toFixed(6));
+}
+
+function assertMonotonic(values: number[]): void {
+  for (let index = 1; index < values.length; index += 1) {
+    assert.ok(values[index]! >= values[index - 1]!);
+  }
+}
+
+function statesForReceipt(frames: { ui_state: ChatFrameUiState }[], messageId: string): string[] {
+  const states: string[] = [];
+  for (const frame of frames) {
+    const state = frame.ui_state.read_receipt?.message_id === messageId ? frame.ui_state.read_receipt.state : undefined;
+    if (state && state !== states.at(-1)) states.push(state);
+  }
+  return states;
+}
+
+function withStartTimes<T extends { duration_sec: number }>(frames: T[]): { frame: T; startSec: number }[] {
+  let startSec = 0;
+  return frames.map((frame) => {
+    const current = { frame, startSec: Number(startSec.toFixed(6)) };
+    startSec += frame.duration_sec;
+    return current;
+  });
 }
