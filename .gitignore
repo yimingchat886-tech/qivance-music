@@ -12,6 +12,8 @@ tmp/
 !.trellis/config.yaml
 !.trellis/spec/
 !.trellis/spec/**
+!.trellis/templates/
+!.trellis/templates/**
 !.trellis/scripts/
 !.trellis/scripts/**
 .trellis/.runtime/
