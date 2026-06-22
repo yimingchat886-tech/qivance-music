@@ -1,3 +1,4 @@
+import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { writeJson } from "../fs-utils.ts";
 import type { LineTiming, LyricWordTiming, SectionMapLike } from "./line-timing.ts";
@@ -12,6 +13,8 @@ export type ChatConversationUiProfile = {
   left_avatar_src?: string;
   right_avatar_src?: string;
 };
+
+export const CHAT_UI_PROFILE_PATH = "data/chains/chat_dialogue_mv/chat_ui_profile.json";
 
 export type ConversationPlan = {
   schema_version: 1;
@@ -114,15 +117,47 @@ export async function withProjectChatAvatarUi(input: {
   projectRoot: string;
   conversationPlan: ConversationPlan;
 }): Promise<ConversationPlan> {
+  const projectProfile = await readProjectChatUiProfile(input.projectRoot);
   return {
     ...input.conversationPlan,
     chat_ui: {
-      ...input.conversationPlan.chat_ui,
       contact_avatar_src: "../assets/avatars/1.jpg",
       left_avatar_src: "../assets/avatars/1.jpg",
       right_avatar_src: "../assets/avatars/2.jpg",
+      ...input.conversationPlan.chat_ui,
+      ...projectProfile,
     },
   };
+}
+
+async function readProjectChatUiProfile(projectRoot: string): Promise<ChatConversationUiProfile> {
+  try {
+    return normalizeChatUiProfile(JSON.parse(await readFile(path.join(projectRoot, CHAT_UI_PROFILE_PATH), "utf8")) as unknown);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return {};
+    throw error;
+  }
+}
+
+function normalizeChatUiProfile(value: unknown): ChatConversationUiProfile {
+  if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("chat_ui_profile.json must be an object.");
+  const input = value as Record<keyof ChatConversationUiProfile, unknown>;
+  const profile: ChatConversationUiProfile = {};
+  for (const key of ["contact_name", "contact_status", "contact_avatar_src", "left_avatar_src", "right_avatar_src"] as const) {
+    const field = input[key];
+    if (field === undefined) continue;
+    if (typeof field !== "string") throw new Error(`chat_ui_profile.json ${key} must be a string.`);
+    const trimmed = nonEmpty(field);
+    if (!trimmed) continue;
+    if (key.endsWith("_avatar_src") && /^https?:\/\//i.test(trimmed)) throw new Error(`chat_ui_profile.json ${key} must be local.`);
+    profile[key] = trimmed;
+  }
+  return profile;
+}
+
+function nonEmpty(value: string): string | undefined {
+  const trimmed = value.trim();
+  return trimmed ? trimmed : undefined;
 }
 
 export function validateConversationPlan(input: {

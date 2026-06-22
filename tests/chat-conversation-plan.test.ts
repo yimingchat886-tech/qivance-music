@@ -1,6 +1,9 @@
 import assert from "node:assert/strict";
+import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import path from "node:path";
 import test from "node:test";
-import { buildConversationPlan, validateConversationPlan, withProjectChatAvatarUi } from "../src/lib/chat-dialogue/conversation-plan.ts";
+import { CHAT_UI_PROFILE_PATH, buildConversationPlan, validateConversationPlan, withProjectChatAvatarUi } from "../src/lib/chat-dialogue/conversation-plan.ts";
 import { buildLineTimings } from "../src/lib/chat-dialogue/line-timing.ts";
 import { buildLyricsLineMap } from "../src/lib/chat-dialogue/lyrics-line-map.ts";
 import { buildSpeakerAttribution } from "../src/lib/chat-dialogue/speaker-attribution.ts";
@@ -57,6 +60,43 @@ test("injects packaged default avatar profile without requiring project jpgs", a
   assert.equal(avatarPlan.chat_ui?.contact_avatar_src, "../assets/avatars/1.jpg");
   assert.equal(avatarPlan.chat_ui?.left_avatar_src, "../assets/avatars/1.jpg");
   assert.equal(avatarPlan.chat_ui?.right_avatar_src, "../assets/avatars/2.jpg");
+});
+
+test("merges project chat ui profile into the single header contact profile", async () => {
+  const projectRoot = await mkdtemp(path.join(tmpdir(), "qivance-chat-ui-"));
+  await writeProfile(projectRoot, {
+    contact_name: "林同学",
+    contact_status: "今天在线",
+    contact_avatar_src: "../assets/avatars/contact.jpg",
+    left_avatar_src: "../assets/avatars/contact.jpg",
+    right_avatar_src: "../assets/avatars/self.jpg",
+  });
+
+  const avatarPlan = await withProjectChatAvatarUi({
+    projectRoot,
+    conversationPlan: conversationPlanFixture(),
+  });
+
+  assert.equal(avatarPlan.chat_ui?.contact_name, "林同学");
+  assert.equal(avatarPlan.chat_ui?.contact_status, "今天在线");
+  assert.equal(avatarPlan.chat_ui?.contact_avatar_src, "../assets/avatars/contact.jpg");
+  assert.equal(avatarPlan.chat_ui?.left_avatar_src, "../assets/avatars/contact.jpg");
+  assert.equal(avatarPlan.chat_ui?.right_avatar_src, "../assets/avatars/self.jpg");
+});
+
+test("rejects remote project chat avatar profile paths", async () => {
+  const projectRoot = await mkdtemp(path.join(tmpdir(), "qivance-chat-ui-"));
+  await writeProfile(projectRoot, {
+    contact_avatar_src: "https://example.com/avatar.jpg",
+  });
+
+  await assert.rejects(
+    withProjectChatAvatarUi({
+      projectRoot,
+      conversationPlan: conversationPlanFixture(),
+    }),
+    /contact_avatar_src must be local/,
+  );
 });
 
 test("uses diagnostic fallback only when allowed", () => {
@@ -152,4 +192,10 @@ function conversationPlanFixture() {
   });
   assert.ok(result.conversationPlan);
   return result.conversationPlan;
+}
+
+async function writeProfile(projectRoot: string, profile: Record<string, unknown>): Promise<void> {
+  const filePath = path.join(projectRoot, CHAT_UI_PROFILE_PATH);
+  await mkdir(path.dirname(filePath), { recursive: true });
+  await writeFile(filePath, `${JSON.stringify(profile, null, 2)}\n`, "utf8");
 }

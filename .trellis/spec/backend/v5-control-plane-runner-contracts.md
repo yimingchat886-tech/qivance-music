@@ -62,6 +62,7 @@
   - `video/html-video/.html-video/projects/<project_id>/frames/**`
   - `exports/chat_dialogue_mv/**`
   - `exports/video_chain/**`
+- `chat_dialogue_mv` conversation plan build may read optional `data/chains/chat_dialogue_mv/chat_ui_profile.json` to override the single visible header/contact profile before rendering; message rows must not gain visible side names from this profile.
 - Final manifest must verify stable input file sha256 against active `ProjectInput` rows before marking the project passed.
 - `POST /api/projects/:id/chains/video-chain/revise` runs the html-video agent and refreshes preview frames only. It must not render, mux, create, or modify `final.mp4`.
 - `POST /api/projects/:id/chains/video-chain/export/render` is the explicit final export path; it renders html-video frames, muxes `active_music_take.mp3`, writes QA, and writes schema version `6` render manifest.
@@ -127,6 +128,7 @@
   - `tests/timing-pipeline-v5.test.ts`
   - `tests/chat-dialogue-runner-v5.test.ts`
   - `tests/chat-conversation-plan.test.ts`
+    - assert `chat_ui_profile.json` present/absent behavior for project-local contact profile
   - assert stop/recovery, `timing_blocked`, final artifacts, `artifact_inconsistent`, and Chinese no-whitespace lyric chunk matching
 - Workbench/API:
   - `tests/workbench-html.test.ts`

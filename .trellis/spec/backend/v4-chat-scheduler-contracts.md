@@ -28,6 +28,7 @@
 
 - Chain id is always `chat_dialogue_mv`.
 - Chain artifacts stay under `data/chains/chat_dialogue_mv/**`.
+- Optional chat UI profile input stays at `data/chains/chat_dialogue_mv/chat_ui_profile.json` and may set local-only `contact_name`, `contact_status`, `contact_avatar_src`, `left_avatar_src`, and `right_avatar_src` before `conversation_plan.json` is written.
 - Chain exports stay under `exports/chat_dialogue_mv/**`.
 - Runtime chat HTML stays under `video/html-video/.html-video/projects/<project_id>/runtime/chat_dialogue_mv.html`.
 - Production visual rendering uses browser recording:
@@ -58,6 +59,7 @@
 - Missing active audio -> chain status includes `audio_missing`.
 - Missing timing bundle -> chain status includes `timing_missing`.
 - Missing `conversation_plan.json` before frame build/export -> `409 conversation_plan_missing`.
+- Invalid `chat_ui_profile.json` object, field type, or remote avatar URL -> conversation plan build fails before render artifacts are written.
 - Missing `runtime_timeline.json` before browser recording export -> `409 runtime_timeline_missing`.
 - Missing `frame_contracts.json` before static fallback preview/export -> `409 frame_contracts_missing`.
 - Invalid chain revision request without `request` -> `400 invalid_chat_revision_request`.
@@ -86,6 +88,7 @@
   - `tests/chat-lyrics-line-map.test.ts`
   - `tests/chat-speaker-attribution.test.ts`
   - `tests/chat-conversation-plan.test.ts`
+    - assert optional `chat_ui_profile.json` overrides the single header/contact profile and missing profile preserves defaults
   - `tests/chat-animation-plan.test.ts`
   - `tests/chat-frame-contracts.test.ts` with assertions for positive frame durations, total duration, `ui_state` progress ranges, receipt target rules, paused CSS keyframes, and receipt avatar source
   - `tests/chat-frame-renderer.test.ts`
