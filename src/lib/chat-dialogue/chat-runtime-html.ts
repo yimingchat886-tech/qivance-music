@@ -1,4 +1,4 @@
-import { mkdir, writeFile } from "node:fs/promises";
+import { copyFile, mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 import type { ChatAnimationPlan } from "./chat-animation-plan.ts";
 import type { ConversationPlan } from "./conversation-plan.ts";
@@ -13,6 +13,7 @@ type ResolvedRuntimeUiProfile = {
 };
 
 const STATUS_ICON_BASE = "../assets/status_bar_icons/";
+const STATUS_ICON_FILES = ["back_arrow.png", "online_dot.png", "video_camera.png", "more_ellipsis.png"] as const;
 
 export function renderChatRuntimeHtml(input: {
   conversationPlan: ConversationPlan;
@@ -245,10 +246,26 @@ export async function writeChatRuntimeHtml(input: {
   html: string;
 }): Promise<{ path: string }> {
   const relativePath = `video/html-video/.html-video/projects/${input.projectId}/runtime/chat_dialogue_mv.html`;
+  const projectDir = path.join(input.projectRoot, `video/html-video/.html-video/projects/${input.projectId}`);
   const htmlPath = path.join(input.projectRoot, relativePath);
   await mkdir(path.dirname(htmlPath), { recursive: true });
+  await writeRuntimeAssets(projectDir);
   await writeFile(htmlPath, input.html, "utf8");
   return { path: relativePath };
+}
+
+async function writeRuntimeAssets(projectDir: string): Promise<void> {
+  const statusIconDir = path.join(projectDir, "assets/status_bar_icons");
+  const avatarDir = path.join(projectDir, "assets/avatars");
+  await Promise.all([
+    mkdir(statusIconDir, { recursive: true }),
+    mkdir(avatarDir, { recursive: true }),
+  ]);
+  await Promise.all([
+    ...STATUS_ICON_FILES.map((fileName) => copyFile(new URL(`./assets/status_bar_icons/${fileName}`, import.meta.url), path.join(statusIconDir, fileName))),
+    copyFile(new URL("./assets/default_avatars/1.jpg", import.meta.url), path.join(avatarDir, "1.jpg")),
+    copyFile(new URL("./assets/default_avatars/2.jpg", import.meta.url), path.join(avatarDir, "2.jpg")),
+  ]);
 }
 
 export function validateChatRuntimeHtml(html: string): { ok: boolean; issues: string[] } {

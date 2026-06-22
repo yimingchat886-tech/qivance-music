@@ -4,10 +4,12 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 import {
+  captureScreenshotWithUnpausedVirtualTime,
   chromeRuntimeRecordingArgs,
   ffmpegImageSequenceArgs,
   frameCountForTimeline,
   renderChatRuntimeToVisual,
+  withTimeout,
   type CaptureRuntimeScreenshotsInput,
 } from "../src/lib/chat-dialogue/chat-browser-recorder.ts";
 import type { ChatRuntimeTimeline } from "../src/lib/chat-dialogue/chat-runtime-timeline.ts";
@@ -92,6 +94,30 @@ test("writes browser render evidence after mocked capture and ffmpeg", async () 
   assert.equal(evidenceJson.runtime_html_path, "runtime.html");
   assert.equal(evidenceJson.output_path, "exports/chat_dialogue_mv/visual.mp4");
   await assert.rejects(stat(path.join(projectRoot, "data/chains/chat_dialogue_mv/browser_render_frames")));
+});
+
+test("fails fast when a browser recorder wait stalls", async () => {
+  await assert.rejects(
+    withTimeout(new Promise(() => undefined), 1, "chat_browser_recording_stalled: test stall"),
+    /chat_browser_recording_stalled: test stall/,
+  );
+});
+
+test("unpauses virtual time before capturing a runtime screenshot", async () => {
+  const calls: Array<{ method: string; params?: Record<string, unknown> }> = [];
+  const screenshot = await captureScreenshotWithUnpausedVirtualTime({
+    async send<T>(method: string, params?: Record<string, unknown>): Promise<T> {
+      calls.push({ method, params });
+      if (method === "Page.captureScreenshot") return { data: "png-data" } as T;
+      return {} as T;
+    },
+  });
+
+  assert.equal(screenshot.data, "png-data");
+  assert.deepEqual(calls, [
+    { method: "Emulation.setVirtualTimePolicy", params: { policy: "pauseIfNetworkFetchesPending" } },
+    { method: "Page.captureScreenshot", params: { format: "png", fromSurface: true } },
+  ]);
 });
 
 function runtimeTimelineFixture(): ChatRuntimeTimeline {

@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp, readFile } from "node:fs/promises";
+import { access, mkdtemp, readFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -45,6 +45,10 @@ test("writes runtime HTML under the project runtime directory", async () => {
 
   assert.equal(result.path, "video/html-video/.html-video/projects/project_001/runtime/chat_dialogue_mv.html");
   assert.equal(await readFile(path.join(tmp, result.path), "utf8"), html);
+  await access(path.join(tmp, "video/html-video/.html-video/projects/project_001/assets/status_bar_icons/back_arrow.png"));
+  await access(path.join(tmp, "video/html-video/.html-video/projects/project_001/assets/status_bar_icons/video_camera.png"));
+  await access(path.join(tmp, "video/html-video/.html-video/projects/project_001/assets/avatars/1.jpg"));
+  await access(path.join(tmp, "video/html-video/.html-video/projects/project_001/assets/avatars/2.jpg"));
 });
 
 function conversationFixture(): ConversationPlan {

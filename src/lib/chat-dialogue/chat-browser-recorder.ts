@@ -10,6 +10,8 @@ import type { ChatRuntimeTimeline } from "./chat-runtime-timeline.ts";
 
 const execFileAsync = promisify(execFileCallback);
 const BROWSER_RENDER_EVIDENCE_PATH = "data/chains/chat_dialogue_mv/browser_render_evidence.json";
+const CDP_COMMAND_TIMEOUT_MS = 5000;
+const VIRTUAL_TIME_ADVANCE_TIMEOUT_MS = 5000;
 
 export type RenderChatRuntimeToVisualInput = {
   projectRoot: string;
@@ -70,6 +72,7 @@ export async function renderChatRuntimeToVisual(
   const chromeExecutable = input.chromeExecutable ?? process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH ?? "google-chrome";
   const ownsRenderRoot = input.renderRoot === undefined;
 
+  if (ownsRenderRoot) await rm(renderRoot, { recursive: true, force: true });
   await mkdir(renderRoot, { recursive: true });
   await mkdir(path.dirname(outputAbsolutePath), { recursive: true });
   await (deps.captureScreenshots ?? captureRuntimeScreenshots)({
@@ -187,9 +190,13 @@ async function captureRuntimeScreenshots(input: CaptureRuntimeScreenshotsInput):
       if (index > 0) {
         const expired = cdp.waitForEvent("Emulation.virtualTimeBudgetExpired");
         await cdp.send("Emulation.setVirtualTimePolicy", { policy: "advance", budget: 1000 / input.fps });
-        await expired;
+        await withTimeout(
+          expired,
+          VIRTUAL_TIME_ADVANCE_TIMEOUT_MS,
+          `chat_browser_recording_stalled: virtual time did not advance at frame ${index + 1}/${input.frameCount}`,
+        );
       }
-      const screenshot = await cdp.send<{ data: string }>("Page.captureScreenshot", { format: "png", fromSurface: true });
+      const screenshot = await captureScreenshotWithUnpausedVirtualTime(cdp);
       await writeFile(path.join(input.renderRoot, `frame_${String(index + 1).padStart(6, "0")}.png`), screenshot.data, "base64");
     }
     return { chromeExecutable: input.chromeExecutable };
@@ -197,6 +204,15 @@ async function captureRuntimeScreenshots(input: CaptureRuntimeScreenshotsInput):
     cdp?.close();
     killChrome(chrome);
   }
+}
+
+type CdpCommandSender = {
+  send<T = Record<string, unknown>>(method: string, params?: Record<string, unknown>): Promise<T>;
+};
+
+export async function captureScreenshotWithUnpausedVirtualTime(cdp: CdpCommandSender): Promise<{ data: string }> {
+  await cdp.send("Emulation.setVirtualTimePolicy", { policy: "pauseIfNetworkFetchesPending" });
+  return cdp.send<{ data: string }>("Page.captureScreenshot", { format: "png", fromSurface: true });
 }
 
 function resolveProjectPath(projectRoot: string, filePath: string): string {
@@ -259,6 +275,17 @@ function wait(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+export function withTimeout<T>(promise: Promise<T>, ms: number, message: string): Promise<T> {
+  let timeout: ReturnType<typeof setTimeout> | undefined;
+  const timeoutPromise = new Promise<never>((_, reject) => {
+    timeout = setTimeout(() => reject(new Error(message)), ms);
+    timeout.unref?.();
+  });
+  return Promise.race([promise, timeoutPromise]).finally(() => {
+    if (timeout) clearTimeout(timeout);
+  });
+}
+
 type WebSocketLike = {
   addEventListener(type: "open" | "message" | "error" | "close", listener: (event: { data?: unknown; error?: unknown }) => void, options?: { once?: boolean }): void;
   send(data: string): void;
@@ -283,10 +310,10 @@ class CdpSession {
   static async connect(url: string): Promise<CdpSession> {
     const Ctor = webSocketConstructor();
     const socket = new Ctor(url);
-    await new Promise<void>((resolve, reject) => {
+    await withTimeout(new Promise<void>((resolve, reject) => {
       socket.addEventListener("open", () => resolve(), { once: true });
       socket.addEventListener("error", () => reject(new Error("Chrome DevTools WebSocket failed to open")), { once: true });
-    });
+    }), CDP_COMMAND_TIMEOUT_MS, "chat_browser_recording_stalled: Chrome DevTools WebSocket did not open");
     return new CdpSession(socket);
   }
 
@@ -294,11 +321,19 @@ class CdpSession {
     const id = this.id;
     this.id += 1;
     this.socket.send(JSON.stringify({ id, method, params }));
-    return new Promise((resolve, reject) => {
+    const response = new Promise<T>((resolve, reject) => {
       this.pending.set(id, {
         resolve: (value) => resolve(value as T),
         reject,
       });
+    });
+    return withTimeout(
+      response,
+      CDP_COMMAND_TIMEOUT_MS,
+      `chat_browser_recording_stalled: Chrome DevTools command timed out: ${method}`,
+    ).catch((error) => {
+      this.pending.delete(id);
+      throw error;
     });
   }
 
