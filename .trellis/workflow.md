@@ -77,11 +77,11 @@ python3 ./.trellis/scripts/task.py create-pr [name] [--dry-run]
 
 ### Staged Delivery Overlay
 
-For T3/T4 work, high-risk T2 work, parent/child delivery, RTM-tracked work, or harness/tooling changes, use the optional staged delivery overlay in `.trellis/spec/project/index.md`.
+Only use staged delivery overlay for tasks that are explicitly `workflow_mode=staged_overlay`, T3/T4 work, or high-risk T2 work.
 
 The overlay is not a replacement for the built-in Trellis state machine. Do not add custom task statuses for v1.4.1 work. Keep `task.json.status` on the normal `planning -> in_progress -> completed` lifecycle, and record staged facts under `task.json.meta.workflow_mode = "staged_overlay"` and `task.json.meta.staged_delivery`.
 
-Staged overlay child tasks use soft archive after the user completion signal: commit the approved child scope, record the commit in `stage-report.md` and `task.json.meta.staged_delivery`, keep the child task directory in place, and do not call built-in `task.py archive` for that child. Push still requires an explicit user command.
+Staged overlay child tasks use soft archive after the user completion signal: commit the approved child scope, record the commit in `stage-report.md` and `task.json.meta.staged_delivery`, keep the child task directory in place, and do not call built-in `task.py archive` for that child. After soft archive, the child is evidence only and is no longer the active implementation target. Push still requires an explicit user command.
 
 ### Workspace System
 
@@ -160,7 +160,7 @@ Phase 3: Finish  → distill lessons + wrap-up
 [workflow-state:no_task]
 No active task. **A Direct answer** — pure Q&A / explanation / lookup / chat; no file writes + one-line answer + repo reads ≤ 2 files → AI judges, no override needed.
 **B Create a task** — any implementation / code change / build / refactor work. Entry sequence: (1) `python3 ./.trellis/scripts/task.py create "<title>"` to create the task (status=planning, breadcrumb switches to [workflow-state:planning] for brainstorm + jsonl phase guidance) → (2) load `trellis-brainstorm` skill to discuss requirements with the user and iterate on prd.md → (3) once prd is done and jsonl is curated, run `task.py start <task-dir>` to enter [workflow-state:in_progress] for the implementation skeleton. **"It looks small" is NOT grounds for downgrading B to A or C**.
-For T3/T4 work, high-risk T2 work, parent/child delivery, RTM-tracked work, or harness/tooling changes, create a normal Trellis task first and then apply the staged delivery overlay from `.trellis/spec/project/index.md`; do not invent custom statuses.
+Only for explicit staged overlay, T3/T4 work, or high-risk T2 work: create a normal Trellis task first and then apply `.trellis/spec/project/index.md`; do not invent custom statuses.
 **C Inline change** (per-turn only, escape hatch for B) — the user's CURRENT message MUST contain one of: "skip trellis" / "no task" / "just do it" / "don't create a task" / "跳过 trellis" / "别走流程" / "小修一下" / "直接改" / "先别建任务" → briefly acknowledge ("ok, skipping trellis flow this turn"), then inline. **Without seeing one of these phrases you must NOT inline on your own**; do not invent an override the user never said.
 [/workflow-state:no_task]
 
@@ -208,7 +208,7 @@ Then run `task.py start <task-dir>` to flip status to in_progress.
 [workflow-state:in_progress]
 **Tools**: `trellis-implement` / `trellis-research` are sub-agent types only (Task/Agent tool, NOT Skill — there is no skill by these names). `trellis-update-spec` is a skill. `trellis-check` exists as both; prefer the Agent form when verifying after code changes.
 **Flow**: trellis-implement → trellis-check → trellis-update-spec → commit (Phase 3.4) → `/trellis:finish-work`.
-If `task.json.meta.workflow_mode = "staged_overlay"`, follow `.trellis/spec/project/index.md`: PLAN confirmation is not commit approval, child tasks wait for a completion signal before commit, child soft archive keeps the task directory in place, and push still needs an explicit user command.
+If `task.json.meta.workflow_mode = "staged_overlay"`, follow `.trellis/spec/project/index.md`: PLAN confirmation is not commit approval, child tasks wait for a completion signal before commit, child soft archive keeps the task directory in place, and push still needs an explicit user command. If `soft_archive_completed = true`, treat the task as evidence-only, not an active implementation target.
 **Main-session default (no override)**: dispatch the `trellis-implement` / `trellis-check` sub-agents — the main agent does NOT edit code by default. Phase 3.4 commit (required, once): after trellis-update-spec, or whenever implementation is verifiably complete, the main agent **drives the commit** — state the commit plan in user-facing text, then run `git commit` — BEFORE suggesting `/trellis:finish-work`. `/finish-work` refuses to run on a dirty working tree (paths outside `.trellis/workspace/` and `.trellis/tasks/`).
 **Sub-agent self-exemption**: if you are already running as `trellis-implement`, implement directly from the loaded task context and do NOT spawn another `trellis-implement`; if you are already running as `trellis-check`, review/fix directly and do NOT spawn another `trellis-check`. The default dispatch rule applies to the main session only.
 **Sub-agent dispatch protocol (all platforms, all sub-agents)**: When you spawn `trellis-implement` / `trellis-check` / `trellis-research`, your dispatch prompt **MUST** start with one line: `Active task: <task path from \`task.py current\`>`. No exceptions. On class-2 platforms (codex / copilot / gemini / qoder) the sub-agent depends on this line because there is no hook to inject task context. On class-1 platforms (claude / cursor / opencode / kiro / codebuddy / droid) the line is normally redundant — the hook injects context directly — but it serves as a critical fallback when the hook fails (Windows + Claude Code PreToolUse silent skip, `--continue` resume, fork distribution, hooks disabled, etc.). For `trellis-research`, the line tells the sub-agent which `{task_dir}/research/` to write into.
@@ -222,7 +222,7 @@ If `task.json.meta.workflow_mode = "staged_overlay"`, follow `.trellis/spec/proj
 
 [workflow-state:in_progress-inline]
 **Flow** (inline mode): main session loads `trellis-before-dev` → main session edits code → main session loads `trellis-check` → run lint / type-check / tests → fix → `trellis-update-spec` → commit (Phase 3.4) → `/trellis:finish-work`.
-If `task.json.meta.workflow_mode = "staged_overlay"`, follow `.trellis/spec/project/index.md`: PLAN confirmation is not commit approval, child tasks wait for a completion signal before commit, child soft archive keeps the task directory in place, and push still needs an explicit user command.
+If `task.json.meta.workflow_mode = "staged_overlay"`, follow `.trellis/spec/project/index.md`: PLAN confirmation is not commit approval, child tasks wait for a completion signal before commit, child soft archive keeps the task directory in place, and push still needs an explicit user command. If `soft_archive_completed = true`, treat the task as evidence-only, not an active implementation target.
 **Main-session default (inline dispatch_mode)**: the main agent edits code directly. Do NOT dispatch `trellis-implement` / `trellis-check` sub-agents. Load the `trellis-before-dev` skill before writing code; load the `trellis-check` skill before reporting completion.
 Phase 3.4 commit (required, once): after `trellis-update-spec`, or whenever implementation is verifiably complete, the main agent **drives the commit** — state the commit plan in user-facing text, then run `git commit` — BEFORE suggesting `/trellis:finish-work`. `/finish-work` refuses to run on a dirty working tree (paths outside `.trellis/workspace/` and `.trellis/tasks/`).
 [/workflow-state:in_progress-inline]

@@ -45,3 +45,18 @@ Parent PRD first complete draft must create `oracle-review-budget.md` with:
 | ordinary T2 | local checklist fallback |
 | high-risk T2 | block or ask user to allow downgrade |
 | T3/T4 | block unless user explicitly allows downgrade |
+
+## Manual Mode / Downgrade Checklist
+
+When Oracle is unavailable or browser/API mode is too slow, record:
+
+- Oracle mode attempted: API / browser / render-copy / manual / none
+- Failure or skip reason:
+- Task level: T0 / T1 / T2 / T3 / T4
+- Downgrade allowed by policy: yes/no
+- User approved downgrade: yes/no
+- Local reviewer:
+- Local checklist used:
+- Remaining risk:
+
+Manual mode is acceptable only when the policy row above allows downgrade, or the user explicitly accepts the downgrade for the current checkpoint.

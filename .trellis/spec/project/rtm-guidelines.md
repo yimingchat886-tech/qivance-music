@@ -9,6 +9,12 @@ Preferred staged overlay paths:
 
 This repo currently also has `docs/requirements traceability matrix.md`. Do not rename or replace it without explicit scope.
 
+Decision:
+
+- New staged overlay work should use the hyphenated Markdown/JSON pair above.
+- Existing references to `docs/requirements traceability matrix.md` are legacy-compatible and should be read when relevant.
+- Migrating or renaming the legacy spaced path is a separate scoped task.
+
 ## Markdown RTM
 
 Markdown is user-facing and may use Chinese.

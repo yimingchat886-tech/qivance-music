@@ -19,6 +19,13 @@
 - Advisory findings:
 - Decision:
 
+### Blocking Finding Report
+
+- Finding:
+- Why it blocks:
+- Minimal path:
+- User decision: A / B / C / D
+
 ## Oracle
 
 - Required: yes/no

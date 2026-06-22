@@ -20,7 +20,12 @@ Stop and ask the user before continuing when a PLAN needs:
 Use this prompt:
 
 ```md
-Ponytail found that the current PLAN requires <dependency/architecture/abstraction expansion>.
+# Ponytail Blocking Finding
+
+Finding: <dependency/architecture/abstraction expansion>
+Why it blocks: <risk or overbuild>
+Minimal path: <smaller option>
+Affected requirement: <id or section>
 
 Options:
 A. Do not do it; use the minimal path

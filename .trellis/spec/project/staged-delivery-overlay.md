@@ -78,6 +78,19 @@ After child work is verified and reported, stop and wait for a completion signal
 
 If the same user message includes a limit such as `先别提交`, `不要归档`, or `还要改`, the limit wins.
 
+Record the signal before committing:
+
+```md
+## User Completion Signal
+
+- Raw signal:
+- Received at:
+- Allows commit: yes/no
+- Allows soft archive: yes/no
+- Explicit limits:
+- Push allowed: no, unless the same message explicitly says push
+```
+
 ## Soft Archive
 
 For staged child tasks, soft archive means:
@@ -88,3 +101,5 @@ For staged child tasks, soft archive means:
 4. Keep the child task directory in place so the parent can aggregate evidence.
 
 Do not call built-in `task.py archive` for a child soft archive.
+
+After soft archive, the child task remains evidence only. It is no longer the active implementation target, even if the session's current task still points at it. Any further implementation needs a new child task or an explicit user decision to reopen the soft-archived child.

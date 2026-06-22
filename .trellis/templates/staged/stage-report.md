@@ -49,12 +49,22 @@
 - Message:
 - Pushed: no
 
+## User Completion Signal
+
+- Raw signal:
+- Received at:
+- Allows commit: yes/no
+- Allows soft archive: yes/no
+- Explicit limits:
+- Push allowed: no, unless explicitly requested
+
 ## Soft Archive Plan
 
 - [ ] Completion signal received
 - [ ] Commit hash recorded
 - [ ] `task.json.meta.staged_delivery.soft_archive_completed = true`
 - [ ] Child directory kept in place
+- [ ] Child is no longer the active implementation target
 
 ## Completion Signal
 

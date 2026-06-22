@@ -26,9 +26,43 @@ Completion signal examples:
 
 If the user says `先别提交`, `不要归档`, `等等`, `还要改`, or `先不要动`, do not commit or archive.
 
+Record the signal in the stage report:
+
+```md
+## User Completion Signal
+
+- Raw signal:
+- Received at:
+- Allows commit: yes/no
+- Allows soft archive: yes/no
+- Explicit limits:
+- Push allowed: no, unless explicitly requested
+```
+
 ## Commit
 
 After completion signal, commit only approved current-task files. Exclude unrelated dirty files.
+
+## Force-Adding Task Evidence
+
+Because `.trellis/tasks/` is ignored, staged overlay may use `git add -f` only for the current task's evidence files:
+
+```bash
+git add -f .trellis/tasks/<current-task>/{prd.md,implement.jsonl,check.jsonl,stage-report.md,task.json}
+```
+
+Allowed:
+
+- current staged task directory only
+- PRD, JSONL context, stage/subphase reports, harness capability report, and task metadata for the current task
+
+Forbidden:
+
+- `git add -f .trellis/tasks/`
+- unrelated active or archived task directories
+- `.trellis/.runtime/`
+- `.trellis/workspace/`
+- secrets, logs, caches, generated media, or production data
 
 ## Push
 
