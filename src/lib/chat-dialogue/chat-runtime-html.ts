@@ -64,12 +64,13 @@ html, body { margin: 0; width: 100%; height: 100%; background: #efefef; color: #
 .chat-header.is-typing .peer-name { opacity: 0; transform: translate3d(0, -4px, 0); }
 .chat-header.is-typing .typing-name { opacity: 1; transform: translate3d(0, 0, 0); }
 .online { position: absolute; left: 0; right: 0; top: 48px; color: #6d6e75; font-size: 29px; font-weight: 400; line-height: 36px; white-space: nowrap; }
-.safety-notice { position: absolute; left: 126px; right: 126px; top: 199px; color: #6d6e75; font-size: 33px; font-weight: 400; line-height: 48px; text-align: center; }
 .time-marker { color: #6d6e75; font-size: 32px; font-weight: 400; line-height: 38px; text-align: center; }
-.top-time { position: absolute; left: 0; right: 0; top: 338px; }
-.chat { position: absolute; left: 40px; right: 40px; top: 412px; bottom: 58px; display: flex; flex-direction: column; gap: 22px; justify-content: flex-start; overflow: hidden; }
+.track-time { margin: 68px 0 28px; }
+.chat-viewport { position: absolute; left: 40px; right: 40px; top: 150px; bottom: 0; overflow: hidden; }
+.chat-track { display: flex; flex-direction: column; gap: 22px; justify-content: flex-start; will-change: transform; contain: paint; transform: translate3d(0, 0, 0); }
+.bottom-spacer { flex: 0 0 300px; height: 300px; }
 .row { display: flex; align-items: flex-start; gap: 18px; min-width: 0; }
-.row.is-hidden { display: none; }
+.row.is-hidden { visibility: hidden; opacity: 0; pointer-events: none; }
 .row.left { justify-content: flex-start; }
 .row.right { justify-content: flex-end; }
 .row.right .message-avatar { order: 2; }
@@ -118,10 +119,12 @@ html, body { margin: 0; width: 100%; height: 100%; background: #efefef; color: #
     <img class="top-icon video-icon-img" src="${escapeHtml(statusIcon("video_camera.png"))}" aria-hidden="true" alt="">
     <img class="top-icon more-icon-img" src="${escapeHtml(statusIcon("more_ellipsis.png"))}" aria-hidden="true" alt="">
   </header>
-  <div class="safety-notice" aria-hidden="true">为保障用户沟通安全，平台会打击诈骗等违法违规内容</div>
-  <div class="time-marker top-time" aria-hidden="true">15:31</div>
-  <section class="chat" id="chatList" aria-label="聊天消息">
+  <section class="chat-viewport" id="chatViewport" aria-label="聊天消息">
+    <div class="chat-track" id="chatTrack">
+      <div class="time-marker track-time" aria-hidden="true">15:31</div>
 ${input.conversationPlan.messages.map((message) => messageRowHtml(message, uiProfile)).join("\n")}
+      <div class="bottom-spacer" aria-hidden="true"></div>
+    </div>
   </section>
 </main>
 <script type="application/json" id="qivance-chat-runtime-data">${runtimeData}</script>
@@ -130,14 +133,25 @@ ${input.conversationPlan.messages.map((message) => messageRowHtml(message, uiPro
   const data = JSON.parse(document.getElementById("qivance-chat-runtime-data").textContent);
   const timeline = data.runtimeTimeline;
   const rows = new Map(Array.from(document.querySelectorAll("[data-message-id]")).map((row) => [row.dataset.messageId, row]));
+  const events = timeline.events.filter((event) => event.type === "message");
+  const hideReceiptAt = new Map(events
+    .filter((event) => event.hide_receipt_message_id)
+    .map((event) => [event.hide_receipt_message_id, event.at_sec]));
+  const chatViewport = document.getElementById("chatViewport");
+  const chatTrack = document.getElementById("chatTrack");
+  const CHAT_BOTTOM_RESERVE_PX = 300;
+  const TRACK_SCROLL_SEC = 0.36;
   let stopped = false;
   let started = false;
   let runtimeStartMs = 0;
-  const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+  let layoutReady = false;
+  const rowLayout = new Map();
   const ready = Promise.all([
     document.fonts && document.fonts.ready ? document.fonts.ready : Promise.resolve(),
     waitForImages(),
   ]).then(() => {
+    measureLayout();
+    renderAt(0);
     document.body.dataset.ready = "true";
   });
 
@@ -151,87 +165,126 @@ ${input.conversationPlan.messages.map((message) => messageRowHtml(message, uiPro
     }));
   }
 
-  function waitUntil(targetMs) {
-    return wait(Math.max(0, targetMs - (performance.now() - runtimeStartMs)));
-  }
-
-  function waitAnimationEnd(el) {
-    return new Promise((resolve) => {
-      el.addEventListener("animationend", resolve, { once: true });
-    });
-  }
-
   function getRow(messageId) {
     const row = rows.get(messageId);
     if (!row) throw new Error("missing row " + messageId);
     return row;
   }
 
-  async function enterMessage(row) {
-    row.classList.remove("is-hidden");
-    void row.offsetWidth;
-    row.classList.add("entering");
-    await waitAnimationEnd(row.querySelector(".bubble"));
-    row.classList.remove("entering");
-    row.classList.add("entered");
-  }
-
-  async function showReadReceipt(row) {
-    row.classList.remove("read-out");
-    row.classList.add("read-in");
-    await wait(timeline.css_motion.receipt_in_ms + 50);
-    row.classList.remove("read-in");
-    row.classList.add("read-on");
-  }
-
-  async function hideReadReceipt(row) {
-    row.classList.remove("read-in", "read-on");
-    row.classList.add("read-out");
-    await wait(timeline.css_motion.receipt_out_ms + 10);
-    row.classList.remove("read-out");
-  }
-
   function setTypingStatus(isTyping) {
     document.getElementById("chatHeader").classList.toggle("is-typing", isTyping);
   }
 
-  function seekTimeline(timeSec) {
-    const events = timeline.events.filter((event) => event.type === "message");
-    const hiddenReceipts = new Set(events
-      .filter((event) => event.hide_receipt_message_id && timeSec >= event.at_sec)
-      .map((event) => event.hide_receipt_message_id));
+  function measureLayout() {
+    const trackTop = chatTrack.getBoundingClientRect().top;
+    rowLayout.clear();
+    for (const event of events) {
+      const row = getRow(event.message_id);
+      const rect = row.getBoundingClientRect();
+      rowLayout.set(event.message_id, { top: rect.top - trackTop, height: rect.height });
+    }
+    layoutReady = true;
+  }
+
+  function renderAt(timeSec) {
+    if (!layoutReady) measureLayout();
     setTypingStatus(events.some((event) => event.side === "left" && timeSec >= event.at_sec && timeSec < event.at_sec + 0.4));
     for (const event of events) {
       const row = getRow(event.message_id);
+      const bubble = row.querySelector(".bubble");
+      const avatar = row.querySelector(".message-avatar");
+      const receipt = row.querySelector(".read-receipt");
+      const bubbleMs = event.side === "right" ? timeline.css_motion.right_bubble_ms : timeline.css_motion.left_bubble_ms;
       row.classList.remove("entering", "entered", "read-in", "read-on", "read-out");
+      clearAnimationState(bubble);
+      clearAnimationState(avatar);
+      clearAnimationState(receipt);
       if (timeSec < event.at_sec) {
         row.classList.add("is-hidden");
         continue;
       }
       row.classList.remove("is-hidden");
-      row.classList.add("entered");
-      if (event.show_receipt_after_enter && !hiddenReceipts.has(event.message_id)) {
-        const receiptAtSec = event.at_sec + ((event.side === "right" ? timeline.css_motion.right_bubble_ms : timeline.css_motion.left_bubble_ms) + 40 + timeline.css_motion.receipt_in_ms) / 1000;
-        if (timeSec >= receiptAtSec) row.classList.add("read-on");
+      const enterProgress = clamp01((timeSec - event.at_sec) / (bubbleMs / 1000));
+      if (enterProgress < 1) {
+        row.classList.add("entering");
+        setAnimationProgress(bubble, bubbleMs, enterProgress);
+        setAnimationProgress(avatar, 180, enterProgress);
+      } else {
+        row.classList.add("entered");
+      }
+      if (event.show_receipt_after_enter) {
+        renderReceipt(row, receipt, event, timeSec, bubbleMs, hideReceiptAt.get(event.message_id));
       }
     }
+    chatTrack.style.transform = "translate3d(0, " + trackYAt(timeSec) + "px, 0)";
   }
 
-  async function playRightMessage(event) {
-    const row = getRow(event.message_id);
-    await enterMessage(row);
-    if (event.show_receipt_after_enter) {
-      await wait(40);
-      await showReadReceipt(row);
+  function renderReceipt(row, receipt, event, timeSec, bubbleMs, hideAtSec) {
+    const receiptInSec = timeline.css_motion.receipt_in_ms / 1000;
+    const receiptOutSec = timeline.css_motion.receipt_out_ms / 1000;
+    const receiptAtSec = event.at_sec + (bubbleMs + 40) / 1000;
+    if (hideAtSec !== undefined && timeSec >= hideAtSec) {
+      if (timeSec < hideAtSec + receiptOutSec) {
+        row.classList.add("read-out");
+        setAnimationProgress(receipt, timeline.css_motion.receipt_out_ms, clamp01((timeSec - hideAtSec) / receiptOutSec));
+      }
+      return;
     }
+    if (timeSec < receiptAtSec) return;
+    if (timeSec < receiptAtSec + receiptInSec) {
+      row.classList.add("read-in");
+      setAnimationProgress(receipt, timeline.css_motion.receipt_in_ms, clamp01((timeSec - receiptAtSec) / receiptInSec));
+      return;
+    }
+    row.classList.add("read-on");
   }
 
-  async function playLeftMessage(event) {
-    if (event.hide_receipt_message_id) void hideReadReceipt(getRow(event.hide_receipt_message_id));
-    setTypingStatus(true);
-    await wait(event.enter_delay_ms || timeline.css_motion.left_enter_delay_ms);
-    await enterMessage(getRow(event.message_id));
-    setTypingStatus(false);
+  function trackYAt(timeSec) {
+    const latestIndex = latestMessageIndex(timeSec);
+    if (latestIndex < 0) return 0;
+    const current = events[latestIndex];
+    const previous = latestIndex > 0 ? events[latestIndex - 1] : undefined;
+    const fromY = previous ? targetTrackY(previous.message_id) : 0;
+    const toY = targetTrackY(current.message_id);
+    const progress = easeOutCubic(clamp01((timeSec - current.at_sec) / TRACK_SCROLL_SEC));
+    return Math.round(fromY + ((toY - fromY) * progress));
+  }
+
+  function latestMessageIndex(timeSec) {
+    for (let index = events.length - 1; index >= 0; index -= 1) {
+      if (timeSec >= events[index].at_sec) return index;
+    }
+    return -1;
+  }
+
+  function targetTrackY(messageId) {
+    const layout = rowLayout.get(messageId);
+    if (!layout) return 0;
+    return Math.min(0, chatViewport.clientHeight - CHAT_BOTTOM_RESERVE_PX - (layout.top + layout.height));
+  }
+
+  function setAnimationProgress(el, durationMs, progress) {
+    if (!el) return;
+    el.style.animationDelay = "-" + Math.round(durationMs * progress) + "ms";
+    el.style.animationPlayState = "paused";
+  }
+
+  function clearAnimationState(el) {
+    if (!el) return;
+    el.style.animationDelay = "";
+    el.style.animationPlayState = "";
+  }
+
+  function clamp01(value) {
+    return Math.max(0, Math.min(1, value));
+  }
+
+  function easeOutCubic(value) {
+    return 1 - Math.pow(1 - value, 3);
+  }
+
+  function seekTimeline(timeSec) {
+    renderAt(timeSec);
   }
 
   async function playTimeline() {
@@ -240,14 +293,16 @@ ${input.conversationPlan.messages.map((message) => messageRowHtml(message, uiPro
     started = true;
     stopped = false;
     runtimeStartMs = performance.now();
-    for (const event of timeline.events) {
-      if (stopped || event.type === "end") break;
-      await waitUntil(event.at_sec * 1000);
-      if (event.side === "right") void playRightMessage(event);
-      else void playLeftMessage(event);
-    }
-    await waitUntil(timeline.duration_sec * 1000);
-    document.body.dataset.playbackDone = "true";
+    requestAnimationFrame(function tick(now) {
+      if (stopped) return;
+      const elapsedSec = Math.min(timeline.duration_sec, (now - runtimeStartMs) / 1000);
+      renderAt(elapsedSec);
+      if (elapsedSec >= timeline.duration_sec) {
+        document.body.dataset.playbackDone = "true";
+        return;
+      }
+      requestAnimationFrame(tick);
+    });
   }
 
   window.__qivanceChatRuntime = {
@@ -255,7 +310,7 @@ ${input.conversationPlan.messages.map((message) => messageRowHtml(message, uiPro
     play: playTimeline,
     seek: seekTimeline,
     stop() { stopped = true; },
-    getState() { return { started, stopped, playbackDone: document.body.dataset.playbackDone === "true" }; },
+    getState() { return { started, stopped, trackY: chatTrack.style.transform, playbackDone: document.body.dataset.playbackDone === "true" }; },
     durationMs: Math.ceil(timeline.duration_sec * 1000),
   };
 })();
@@ -290,9 +345,13 @@ export function validateChatRuntimeHtml(html: string): { ok: boolean; issues: st
   for (const token of ["bubbleFloatPop", "avatarSoftIn", "receiptIn", "receiptOut"]) {
     if (!html.includes(token)) issues.push(`chat runtime html must include ${token}`);
   }
-  for (const token of ["playTimeline", "seekTimeline", "enterMessage", "animationend", "classList"]) {
+  for (const token of ["playTimeline", "seekTimeline", "renderAt", "trackYAt", "requestAnimationFrame", "classList"]) {
     if (!html.includes(token)) issues.push(`chat runtime html script must include ${token}`);
   }
+  if (!/class="chat-viewport"/.test(html) || !/class="chat-track"/.test(html)) issues.push("chat runtime html must render a fixed viewport with a movable chat track");
+  if (!/class="bottom-spacer"/.test(html) || !/CHAT_BOTTOM_RESERVE_PX\s*=\s*300/.test(html)) issues.push("chat runtime html must reserve bottom space for emerging messages");
+  if (!html.includes("chatTrack.style.transform") || !html.includes("trackYAt(timeSec)")) issues.push("chat runtime html must move the chat track with translate3d");
+  if (/safety-notice|为保障用户沟通安全|为保证用户安全/.test(html)) issues.push("chat runtime html must not include the safety notice");
   if (!/overflow-wrap:\s*anywhere/.test(html)) issues.push("chat runtime html must include long-text wrapping");
   if (/read-out[\s\S]{0,200}display\s*:\s*none/i.test(html)) issues.push("chat runtime html must not hide receipt read-out with display:none");
   if (/class="row right/.test(html) && (!/class="receipt-avatar avatar-slot"/.test(html) || !/src="\.\.\/assets\/avatars\//.test(html))) {

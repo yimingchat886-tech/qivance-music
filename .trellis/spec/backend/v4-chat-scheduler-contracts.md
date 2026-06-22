@@ -34,7 +34,8 @@
 - Runtime chat HTML generation must symlink every referenced packaged standard asset under `video/html-video/.html-video/projects/<project_id>/assets/**`; broken local images or copied packaged defaults are render bugs, not acceptable fallbacks.
 - Production visual rendering uses browser recording:
   - `runtime_timeline.json` is the source of truth for browser playback state.
-  - Runtime JS exposes both normal `play()` playback and deterministic `seek(timeSec)` state rendering from `runtime_timeline.json`.
+  - Runtime JS exposes both normal `play()` playback and deterministic `seek(timeSec)` state rendering from `runtime_timeline.json`; both paths must share the same time-based state function so screenshots and live playback cannot drift.
+  - The fixed header/status area stays in place; the chat message area uses a clipped viewport plus a single movable chat track translated with `transform` so the whole conversation slides upward smoothly.
   - Browser recording captures by seeking each 60fps timestamp before taking a screenshot, rather than relying on Chrome virtual-time timers.
   - CSS owns bubble pop, read receipt, avatar, and header typing motion using `transform`, `opacity`, and `visibility`.
   - Browser recording captures the runtime page at 60fps and writes `exports/chat_dialogue_mv/visual.mp4`.

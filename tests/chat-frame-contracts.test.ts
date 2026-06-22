@@ -68,7 +68,7 @@ test("builds local-only chat frame contracts and HTML", () => {
   assert.match(html, /class="avatar-slot message-avatar avatar-right"/);
   const leftVisibleHtml = renderChatFrameHtml({ frame: frameContracts.frames.find((frame) => frame.message_ids.includes("msg_002"))!, conversationPlan });
   assert.match(leftVisibleHtml, /class="avatar-slot message-avatar avatar-left"/);
-  assert.match(html, /为保障用户沟通安全/);
+  assert.doesNotMatch(html, /safety-notice|为保障用户沟通安全|为保证用户安全/);
   assert.match(html, />15:31</);
   assert.match(html, /justify-content:\s*flex-start/);
   assert.match(html, /background:\s*#ffffff/);

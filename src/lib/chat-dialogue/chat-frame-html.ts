@@ -101,10 +101,9 @@ html, body { margin: 0; width: 100%; height: 100%; background: #efefef; color: #
 .title-slot.header-typing-on .typing-name { opacity: 1; visibility: visible; transform: translate3d(0, 0, 0); }
 .online { color: #6d6e75; font-size: 29px; font-weight: 400; line-height: 36px; white-space: nowrap; }
 .title .online { position: absolute; left: 0; right: 0; top: 48px; }
-.safety-notice { position: absolute; left: 126px; right: 126px; top: 199px; color: #6d6e75; font-size: 33px; font-weight: 400; line-height: 48px; text-align: center; }
 .time-marker { color: #6d6e75; font-size: 32px; font-weight: 400; line-height: 38px; text-align: center; }
-.top-time { position: absolute; left: 0; right: 0; top: 338px; }
-.chat { position: absolute; top: 419px; left: 32px; right: 28px; bottom: 0; display: flex; flex-direction: column; gap: 42px; justify-content: flex-start; align-items: stretch; overflow: hidden; }
+.top-time { position: absolute; left: 0; right: 0; top: 220px; }
+.chat { position: absolute; top: 304px; left: 32px; right: 28px; bottom: 240px; display: flex; flex-direction: column; gap: 42px; justify-content: flex-start; align-items: stretch; overflow: hidden; }
 .row { display: flex; align-items: flex-start; width: 100%; gap: 20px; }
 .row.left { justify-content: flex-start; }
 .row.right { justify-content: flex-end; }
@@ -158,7 +157,6 @@ html, body { margin: 0; width: 100%; height: 100%; background: #efefef; color: #
     <img class="top-icon video-icon-img" src="${escapeHtml(statusIcon("video_camera.png"))}" aria-hidden="true" alt="">
     <img class="top-icon more-icon-img" src="${escapeHtml(statusIcon("more_ellipsis.png"))}" aria-hidden="true" alt="">
   </header>
-  <div class="safety-notice" aria-hidden="true">为保障用户沟通安全，未互相关注的陌生人违规消息可能<br>会被处理，请遵守法律法规和社区规范</div>
   <div class="time-marker top-time" aria-hidden="true">15:31</div>
   <section class="chat" aria-label="聊天消息">
 ${messageRowsHtml}
@@ -198,7 +196,7 @@ export function validateChatFrameHtml(html: string): { ok: boolean; issues: stri
   if (!html.includes(statusIcon("avatar_online.png")) && !/class="avatar-slot header-avatar"/.test(html)) issues.push("chat frame html must include a default or custom contact avatar");
   if (!/justify-content:\s*flex-start/.test(html)) issues.push("chat messages must start from the top of the chat area");
   if (/#743df2|#1689ff/.test(html)) issues.push("chat bubbles must use latest-reference colors");
-  if (!/class="safety-notice"/.test(html)) issues.push("chat frame html must include the safety notice");
+  if (/safety-notice|为保障用户沟通安全|为保证用户安全/.test(html)) issues.push("chat frame html must not include the safety notice");
   if (!/>15:31</.test(html)) issues.push("chat frame html must include the latest-reference chat time");
   if (/quick-actions|composer|发消息或按住说话/.test(html)) issues.push("chat frame html must not render the old bottom composer or quick actions");
   if (!/class="header-avatar-wrap"/.test(html)) issues.push("chat frame html must include a replaceable header avatar slot");
