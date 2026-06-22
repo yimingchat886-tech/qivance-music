@@ -92,9 +92,12 @@ import { requestV5RunStop } from "./lib/scheduler/db-run-store.ts";
 import { startV5RunnerLoop } from "./lib/scheduler/server-runner-loop.ts";
 import { createV5TaskHandlers } from "./lib/scheduler/v5-task-handlers.ts";
 import { buildChatAnimationPlan, validateChatAnimationPlan, writeChatAnimationPlan, type ChatAnimationPlan } from "./lib/chat-dialogue/chat-animation-plan.ts";
+import { renderChatRuntimeToVisual } from "./lib/chat-dialogue/chat-browser-recorder.ts";
 import { buildChatFrameContracts, validateChatFrameContracts, writeChatFrameContracts, type ChatFrameContracts } from "./lib/chat-dialogue/chat-frame-contracts.ts";
 import { renderChatFrameHtml, validateChatFrameHtml, writeChatFrameHtml } from "./lib/chat-dialogue/chat-frame-html.ts";
 import { renderChatFramesToVisual } from "./lib/chat-dialogue/chat-frame-renderer.ts";
+import { renderChatRuntimeHtml, validateChatRuntimeHtml, writeChatRuntimeHtml } from "./lib/chat-dialogue/chat-runtime-html.ts";
+import { buildChatRuntimeTimeline, validateChatRuntimeTimeline, writeChatRuntimeTimeline, type ChatRuntimeTimeline } from "./lib/chat-dialogue/chat-runtime-timeline.ts";
 import { buildConversationPlan, validateConversationPlan, withProjectChatAvatarUi, writeConversationPlan, type ConversationPlan } from "./lib/chat-dialogue/conversation-plan.ts";
 import { writeLyricsLineMap, validateLyricsLineMap, type LyricsLineMap } from "./lib/chat-dialogue/lyrics-line-map.ts";
 import { buildSpeakerAttribution, validateSpeakerAttribution, writeSpeakerAttribution, type SpeakerAttribution } from "./lib/chat-dialogue/speaker-attribution.ts";
@@ -912,10 +915,12 @@ function isWorkbenchMetricMap(value: unknown): value is Record<string, string | 
 
 async function chatDialogueChainStatusResponse(paths: SmallProjectPaths): Promise<Record<string, unknown>> {
   const chainStatus = await readOptionalRecord(path.join(paths.projectRoot, "data/chains/chat_dialogue_mv/chain_status.json"));
-  const [speakerAttribution, conversationPlan, frameContracts] = await Promise.all([
+  const [speakerAttribution, conversationPlan, frameContracts, runtimeTimeline, browserRenderEvidence] = await Promise.all([
     readOptionalRecord(path.join(paths.projectRoot, "data/chains/chat_dialogue_mv/speaker_attribution.json")),
     readOptionalRecord(path.join(paths.projectRoot, "data/chains/chat_dialogue_mv/conversation_plan.json")),
     readOptionalRecord(path.join(paths.projectRoot, "data/chains/chat_dialogue_mv/frame_contracts.json")),
+    readOptionalRecord(path.join(paths.projectRoot, "data/chains/chat_dialogue_mv/runtime_timeline.json")),
+    readOptionalRecord(path.join(paths.projectRoot, "data/chains/chat_dialogue_mv/browser_render_evidence.json")),
   ]);
   const lyricsExists = await projectFileExists(paths.projectRoot, "lyrics.md");
   const audioExists = await projectFileExists(paths.projectRoot, "active_music_take.mp3") || await projectFileExists(paths.projectRoot, projectAudioRelativePath(paths));
@@ -930,11 +935,14 @@ async function chatDialogueChainStatusResponse(paths: SmallProjectPaths): Promis
     status: stringBodyValue(chainStatus?.status) ?? (blockingReasons.length > 0 ? "timing_blocked" : "input_ready"),
     mode: stringBodyValue(chainStatus?.mode) ?? "production",
     blocking_reasons: Array.isArray(chainStatus?.blocking_reasons) ? chainStatus.blocking_reasons : blockingReasons,
-    metrics: isWorkbenchMetricMap(chainStatus?.metrics) ? chainStatus.metrics : chatDialogueChainMetrics({ speakerAttribution, conversationPlan, frameContracts }),
+    metrics: isWorkbenchMetricMap(chainStatus?.metrics) ? chainStatus.metrics : chatDialogueChainMetrics({ speakerAttribution, conversationPlan, frameContracts, runtimeTimeline, browserRenderEvidence }),
     artifacts: isRecord(chainStatus?.artifacts) ? chainStatus.artifacts : {
       lyrics_line_map: await artifactExists(paths.projectRoot, "data/chains/chat_dialogue_mv/lyrics_line_map.json"),
       speaker_attribution: await artifactExists(paths.projectRoot, "data/chains/chat_dialogue_mv/speaker_attribution.json"),
       conversation_plan: await artifactExists(paths.projectRoot, "data/chains/chat_dialogue_mv/conversation_plan.json"),
+      runtime_timeline: await artifactExists(paths.projectRoot, "data/chains/chat_dialogue_mv/runtime_timeline.json"),
+      runtime_html: await artifactExists(paths.projectRoot, `video/html-video/.html-video/projects/${paths.smallProjectId}/runtime/chat_dialogue_mv.html`),
+      browser_render_evidence: await artifactExists(paths.projectRoot, "data/chains/chat_dialogue_mv/browser_render_evidence.json"),
       frame_contracts: await artifactExists(paths.projectRoot, "data/chains/chat_dialogue_mv/frame_contracts.json"),
       render_manifest: await artifactExists(paths.projectRoot, "exports/chat_dialogue_mv/render_manifest.json"),
       final_mp4: await artifactExists(paths.projectRoot, "exports/chat_dialogue_mv/final.mp4"),
@@ -946,13 +954,17 @@ function chatDialogueChainMetrics(input: {
   speakerAttribution: Record<string, unknown> | null;
   conversationPlan: Record<string, unknown> | null;
   frameContracts: Record<string, unknown> | null;
+  runtimeTimeline: Record<string, unknown> | null;
+  browserRenderEvidence: Record<string, unknown> | null;
 }): Record<string, string | number | boolean> {
   const frames = Array.isArray(input.frameContracts?.frames) ? input.frameContracts.frames : [];
   return {
     low_confidence_speaker_count: finiteNumberValue(input.speakerAttribution?.low_confidence_count) ?? 0,
     conversation_message_count: Array.isArray(input.conversationPlan?.messages) ? input.conversationPlan.messages.length : 0,
-    frame_count: frames.length,
-    frame_validation_status: frames.length > 0 ? "ready" : "missing",
+    render_mode: stringBodyValue(input.runtimeTimeline?.render_mode) ?? (frames.length > 0 ? "static_microframes" : "missing"),
+    fps: finiteNumberValue(input.runtimeTimeline?.fps) ?? finiteNumberValue(input.browserRenderEvidence?.fps) ?? 0,
+    frame_count: finiteNumberValue(input.browserRenderEvidence?.frame_count) ?? frames.length,
+    frame_validation_status: input.runtimeTimeline ? "runtime_ready" : frames.length > 0 ? "ready" : "missing",
   };
 }
 
@@ -1050,28 +1062,44 @@ async function buildChatFramesForProject(paths: SmallProjectPaths): Promise<Reco
   const animationPlan = buildChatAnimationPlan({ conversationPlan, durationSec: sectionMap.duration_sec });
   assertValidation("chat_animation_plan_invalid", validateChatAnimationPlan({ conversationPlan, animationPlan }));
   const animationPath = (await writeChatAnimationPlan({ projectRoot: paths.projectRoot, animationPlan })).path;
-  const frameContracts = buildChatFrameContracts({ projectId: paths.smallProjectId, conversationPlan, animationPlan });
-  assertValidation("chat_frame_contracts_invalid", validateChatFrameContracts({ conversationPlan, frameContracts }));
-  const frameContractsPath = (await writeChatFrameContracts({ projectRoot: paths.projectRoot, frameContracts })).path;
-  for (const frame of frameContracts.frames) {
-    const html = renderChatFrameHtml({ frame, conversationPlan });
-    assertValidation("chat_frame_html_invalid", validateChatFrameHtml(html));
-    await writeChatFrameHtml({ htmlPath: path.join(paths.projectRoot, frame.html_path), frame, conversationPlan });
+  const runtimeTimeline = buildChatRuntimeTimeline({ conversationPlan, animationPlan, fps: 60 });
+  assertValidation("chat_runtime_timeline_invalid", validateChatRuntimeTimeline({ conversationPlan, runtimeTimeline }));
+  const runtimeTimelinePath = (await writeChatRuntimeTimeline({ projectRoot: paths.projectRoot, runtimeTimeline })).path;
+  const runtimeHtml = renderChatRuntimeHtml({ conversationPlan, animationPlan, runtimeTimeline });
+  assertValidation("chat_runtime_html_invalid", validateChatRuntimeHtml(runtimeHtml));
+  const runtimeHtmlPath = (await writeChatRuntimeHtml({ projectRoot: paths.projectRoot, projectId: paths.smallProjectId, html: runtimeHtml })).path;
+  let frameContracts: ChatFrameContracts | undefined;
+  let frameContractsPath: string | undefined;
+  if (process.env.QIVANCE_CHAT_STATIC_FALLBACK === "1") {
+    frameContracts = buildChatFrameContracts({ projectId: paths.smallProjectId, conversationPlan, animationPlan });
+    assertValidation("chat_frame_contracts_invalid", validateChatFrameContracts({ conversationPlan, frameContracts }));
+    frameContractsPath = (await writeChatFrameContracts({ projectRoot: paths.projectRoot, frameContracts })).path;
+    for (const frame of frameContracts.frames) {
+      const html = renderChatFrameHtml({ frame, conversationPlan });
+      assertValidation("chat_frame_html_invalid", validateChatFrameHtml(html));
+      await writeChatFrameHtml({ htmlPath: path.join(paths.projectRoot, frame.html_path), frame, conversationPlan });
+    }
   }
   await writeChatDialogueChainStatus(paths, "frames_ready", {
     low_confidence_speaker_count: speakerAttribution.low_confidence_count,
     conversation_message_count: conversationPlan.messages.length,
-    frame_count: frameContracts.frames.length,
-    frame_validation_status: "ready",
+    render_mode: "browser_recording",
+    fps: runtimeTimeline.fps,
+    frame_count: 0,
+    frame_validation_status: "runtime_ready",
   });
   return {
     small_project_id: paths.smallProjectId,
     chain_id: "chat_dialogue_mv",
     artifacts: {
       animation_plan: await chatFileRef(paths, animationPath),
-      frame_contracts: await chatFileRef(paths, frameContractsPath),
+      runtime_timeline: await chatFileRef(paths, runtimeTimelinePath),
+      runtime_html: await chatFileRef(paths, runtimeHtmlPath),
+      ...(frameContractsPath ? { frame_contracts: await chatFileRef(paths, frameContractsPath) } : {}),
     },
-    frames: frameContracts.frames.map((frame) => ({
+    render_mode: "browser_recording",
+    runtime_html_path: runtimeHtmlPath,
+    frames: (frameContracts?.frames ?? []).map((frame) => ({
       frame_id: frame.frame_id,
       html_path: frame.html_path,
       duration_sec: frame.duration_sec,
@@ -1080,6 +1108,18 @@ async function buildChatFramesForProject(paths: SmallProjectPaths): Promise<Reco
 }
 
 async function chatDialoguePreviewResponse(paths: SmallProjectPaths): Promise<Record<string, unknown>> {
+  const runtimeTimelinePath = "data/chains/chat_dialogue_mv/runtime_timeline.json";
+  const runtimeHtmlPath = `video/html-video/.html-video/projects/${paths.smallProjectId}/runtime/chat_dialogue_mv.html`;
+  if (await projectFileExists(paths.projectRoot, runtimeTimelinePath) && await projectFileExists(paths.projectRoot, runtimeHtmlPath)) {
+    return {
+      small_project_id: paths.smallProjectId,
+      chain_id: "chat_dialogue_mv",
+      render_mode: "browser_recording",
+      runtime_timeline: await chatFileRef(paths, runtimeTimelinePath),
+      runtime_html: await chatFileRef(paths, runtimeHtmlPath),
+      frames: [],
+    };
+  }
   const frameContracts = await readRequiredProjectJson<ChatFrameContracts>(
     paths,
     "data/chains/chat_dialogue_mv/frame_contracts.json",
@@ -1128,21 +1168,37 @@ async function renderChatDialogueExportForProject(paths: SmallProjectPaths): Pro
     "conversation_plan_missing",
     "Build conversation_plan.json before rendering chat dialogue export.",
   );
-  const frameContracts = await readRequiredProjectJson<ChatFrameContracts>(
-    paths,
-    "data/chains/chat_dialogue_mv/frame_contracts.json",
-    "frame_contracts_missing",
-    "Build frame_contracts.json before rendering chat dialogue export.",
-  );
+  const runtimeTimelinePath = "data/chains/chat_dialogue_mv/runtime_timeline.json";
+  const runtimeHtmlPath = `video/html-video/.html-video/projects/${paths.smallProjectId}/runtime/chat_dialogue_mv.html`;
+  const runtimeTimeline = await projectFileExists(paths.projectRoot, runtimeTimelinePath)
+    ? await readRequiredProjectJson<ChatRuntimeTimeline>(paths, runtimeTimelinePath, "runtime_timeline_invalid", "runtime_timeline.json is required for browser recording export.")
+    : null;
   const visualRelativePath = "exports/chat_dialogue_mv/visual.mp4";
   const finalRelativePath = "exports/chat_dialogue_mv/final.mp4";
   const visualPath = path.join(paths.projectRoot, visualRelativePath);
   const finalPath = path.join(paths.projectRoot, finalRelativePath);
-  const renderEvidence = await renderChatFramesToVisual({
-    projectRoot: paths.projectRoot,
-    frameContracts,
-    outputPath: visualPath,
-  });
+  let frameContracts: ChatFrameContracts | undefined;
+  if (runtimeTimeline?.render_mode === "browser_recording") {
+    await renderChatRuntimeToVisual({
+      projectRoot: paths.projectRoot,
+      runtimeHtmlPath,
+      runtimeTimeline,
+      outputPath: visualPath,
+    });
+  } else {
+    if (process.env.QIVANCE_CHAT_STATIC_FALLBACK !== "1") throw new ApiRouteError(409, "runtime_timeline_missing", "Build runtime_timeline.json before rendering chat dialogue export.");
+    frameContracts = await readRequiredProjectJson<ChatFrameContracts>(
+      paths,
+      "data/chains/chat_dialogue_mv/frame_contracts.json",
+      "frame_contracts_missing",
+      "Build frame_contracts.json before rendering chat dialogue export.",
+    );
+    await renderChatFramesToVisual({
+      projectRoot: paths.projectRoot,
+      frameContracts,
+      outputPath: visualPath,
+    });
+  }
   const audioRelativePath = conversationPlan.source.audio_path || await chatDialogueAudioRelativePath(paths);
   const audioPath = path.join(paths.projectRoot, audioRelativePath);
   await muxLockedAudio({ visualMp4Path: visualPath, masterAudioPath: audioPath, finalMp4Path: finalPath });
@@ -1161,13 +1217,21 @@ async function renderChatDialogueExportForProject(paths: SmallProjectPaths): Pro
     audio_stream_count: audioStreamCount,
     duration_drift_ms: durationDriftMs,
     ffprobe: finalProbe,
-    frame_renders: renderEvidence.frame_renders,
+    ...(runtimeTimeline ? { browser_render_evidence: await readOptionalRecord(path.join(paths.projectRoot, "data/chains/chat_dialogue_mv/browser_render_evidence.json")) } : {}),
   });
+  const frameContractsEvidence = frameContracts ? await evidenceRef(paths, "data/chains/chat_dialogue_mv/frame_contracts.json") : undefined;
   const manifest = buildRenderManifestV4({
     mode: "production",
     runId: `api_render_${new Date().toISOString().replaceAll(/[^0-9]+/g, "").slice(0, 14)}`,
     conversationPlan: await evidenceRef(paths, "data/chains/chat_dialogue_mv/conversation_plan.json"),
-    frameContracts: await evidenceRef(paths, "data/chains/chat_dialogue_mv/frame_contracts.json"),
+    ...(frameContractsEvidence ? { frameContracts: frameContractsEvidence } : {}),
+    ...(runtimeTimeline ? {
+      runtimeTimeline: await evidenceRef(paths, runtimeTimelinePath),
+      runtimeHtml: await evidenceRef(paths, runtimeHtmlPath),
+      browserRenderEvidence: await evidenceRef(paths, "data/chains/chat_dialogue_mv/browser_render_evidence.json"),
+      renderMode: "browser_recording" as const,
+      fps: runtimeTimeline.fps,
+    } : {}),
     lyrics: await evidenceRef(paths, "lyrics.md"),
     audio: await evidenceRef(paths, audioRelativePath),
     timing: {
@@ -1193,8 +1257,10 @@ async function renderChatDialogueExportForProject(paths: SmallProjectPaths): Pro
   await writeChatDialogueChainStatus(paths, "passed", {
     low_confidence_speaker_count: finiteNumberValue((await readOptionalRecord(path.join(paths.projectRoot, "data/chains/chat_dialogue_mv/speaker_attribution.json")))?.low_confidence_count) ?? 0,
     conversation_message_count: conversationPlan.messages.length,
-    frame_count: frameContracts.frames.length,
-    frame_validation_status: "ready",
+    render_mode: runtimeTimeline ? "browser_recording" : "static_microframes",
+    fps: runtimeTimeline?.fps ?? 30,
+    frame_count: finiteNumberValue((await readOptionalRecord(path.join(paths.projectRoot, "data/chains/chat_dialogue_mv/browser_render_evidence.json")))?.frame_count) ?? frameContracts?.frames.length ?? 0,
+    frame_validation_status: runtimeTimeline ? "runtime_ready" : "ready",
   });
   return {
     small_project_id: paths.smallProjectId,
@@ -1385,6 +1451,9 @@ async function writeChatDialogueChainStatus(paths: SmallProjectPaths, status: st
       speaker_attribution: await artifactExists(paths.projectRoot, "data/chains/chat_dialogue_mv/speaker_attribution.json"),
       conversation_plan: await artifactExists(paths.projectRoot, "data/chains/chat_dialogue_mv/conversation_plan.json"),
       animation_plan: await artifactExists(paths.projectRoot, "data/chains/chat_dialogue_mv/animation_plan.json"),
+      runtime_timeline: await artifactExists(paths.projectRoot, "data/chains/chat_dialogue_mv/runtime_timeline.json"),
+      runtime_html: await artifactExists(paths.projectRoot, `video/html-video/.html-video/projects/${paths.smallProjectId}/runtime/chat_dialogue_mv.html`),
+      browser_render_evidence: await artifactExists(paths.projectRoot, "data/chains/chat_dialogue_mv/browser_render_evidence.json"),
       frame_contracts: await artifactExists(paths.projectRoot, "data/chains/chat_dialogue_mv/frame_contracts.json"),
       qa_report: await artifactExists(paths.projectRoot, "data/chains/chat_dialogue_mv/qa_report.json"),
       render_manifest: await artifactExists(paths.projectRoot, "exports/chat_dialogue_mv/render_manifest.json"),

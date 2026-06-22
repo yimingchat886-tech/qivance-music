@@ -234,7 +234,8 @@ function outputArtifactsForStage(chainId: V5ChainId, stage: V5ChainStage): strin
     case "build_chat_frames":
       return [
         "data/chains/chat_dialogue_mv/animation_plan.json",
-        "data/chains/chat_dialogue_mv/frame_contracts.json",
+        "data/chains/chat_dialogue_mv/runtime_timeline.json",
+        "video/html-video/.html-video/projects/<project_id>/runtime/chat_dialogue_mv.html",
       ];
     case "render_visual":
       return ["exports/chat_dialogue_mv/visual.mp4"];

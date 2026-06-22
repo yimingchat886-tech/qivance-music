@@ -1,14 +1,17 @@
 import { execFile as execFileCallback } from "node:child_process";
-import { mkdir, readFile } from "node:fs/promises";
+import { access, mkdir, readFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import { validateAudioAnalysisArtifacts } from "../audio-analysis/librosa-runner.ts";
 import type { BeatGrid, EnergyCurve, OnsetEvents } from "../audio-analysis/types.ts";
 import { buildChatAnimationPlan, validateChatAnimationPlan, writeChatAnimationPlan } from "../chat-dialogue/chat-animation-plan.ts";
+import { renderChatRuntimeToVisual } from "../chat-dialogue/chat-browser-recorder.ts";
 import { buildChatFrameContracts, validateChatFrameContracts, writeChatFrameContracts } from "../chat-dialogue/chat-frame-contracts.ts";
 import { renderChatFrameHtml, validateChatFrameHtml, writeChatFrameHtml } from "../chat-dialogue/chat-frame-html.ts";
 import { renderChatFramesToVisual } from "../chat-dialogue/chat-frame-renderer.ts";
+import { renderChatRuntimeHtml, validateChatRuntimeHtml, writeChatRuntimeHtml } from "../chat-dialogue/chat-runtime-html.ts";
+import { buildChatRuntimeTimeline, validateChatRuntimeTimeline, writeChatRuntimeTimeline, type ChatRuntimeTimeline } from "../chat-dialogue/chat-runtime-timeline.ts";
 import type { ChatFrameContracts } from "../chat-dialogue/chat-frame-contracts.ts";
 import { buildConversationPlan, validateConversationPlan, withProjectChatAvatarUi, writeConversationPlan, type ConversationPlan } from "../chat-dialogue/conversation-plan.ts";
 import type { LyricWordTiming, SectionMapLike } from "../chat-dialogue/line-timing.ts";
@@ -44,6 +47,7 @@ export type V5TaskHandlerDeps = VideoChainDeps & {
   }) => Promise<void>;
   runWhisperXAlignment?: typeof runWhisperXAlignmentDefault;
   renderChatFramesToVisual?: typeof renderChatFramesToVisual;
+  renderChatRuntimeToVisual?: typeof renderChatRuntimeToVisual;
   muxLockedAudio?: typeof muxLockedAudioDefault;
   ffprobeJson?: (filePath: string) => Promise<Record<string, unknown>>;
 };
@@ -179,25 +183,52 @@ async function buildConversationPlanTask({ prisma, task }: V5SchedulerTaskHandle
   await writeConversationPlan({ projectRoot: project.projectRoot, conversationPlan });
 }
 
-async function buildChatFramesTask({ prisma, task }: V5SchedulerTaskHandlerInput): Promise<void> {
+async function buildChatFramesTask({ prisma, task }: V5SchedulerTaskHandlerInput): Promise<{ outputArtifacts: Array<{ path: string; kind?: string }> }> {
   const project = await prisma.project.findUniqueOrThrow({ where: { id: task.projectId } });
   const conversationPlan = await readProjectJson<ConversationPlan>(project.projectRoot, "data/chains/chat_dialogue_mv/conversation_plan.json");
   const sectionMap = await readProjectJson<SectionMapLike>(project.projectRoot, "data/timing/section_map.json");
   const animationPlan = buildChatAnimationPlan({ conversationPlan, durationSec: sectionMap.duration_sec ?? conversationPlan.messages.at(-1)?.end_sec ?? 1 });
   assertValidation("chat_animation_plan_invalid", validateChatAnimationPlan({ conversationPlan, animationPlan }));
   await writeChatAnimationPlan({ projectRoot: project.projectRoot, animationPlan });
-  const frameContracts = buildChatFrameContracts({ projectId: project.id, conversationPlan, animationPlan });
-  assertValidation("chat_frame_contracts_invalid", validateChatFrameContracts({ conversationPlan, frameContracts }));
-  await writeChatFrameContracts({ projectRoot: project.projectRoot, frameContracts });
-  for (const frame of frameContracts.frames) {
-    const html = renderChatFrameHtml({ frame, conversationPlan });
-    assertValidation("chat_frame_html_invalid", validateChatFrameHtml(html));
-    await writeChatFrameHtml({ htmlPath: path.join(project.projectRoot, frame.html_path), frame, conversationPlan });
+  const runtimeTimeline = buildChatRuntimeTimeline({ conversationPlan, animationPlan, fps: 60 });
+  assertValidation("chat_runtime_timeline_invalid", validateChatRuntimeTimeline({ conversationPlan, runtimeTimeline }));
+  await writeChatRuntimeTimeline({ projectRoot: project.projectRoot, runtimeTimeline });
+  const runtimeHtml = renderChatRuntimeHtml({ conversationPlan, animationPlan, runtimeTimeline });
+  assertValidation("chat_runtime_html_invalid", validateChatRuntimeHtml(runtimeHtml));
+  const runtimeHtmlPath = (await writeChatRuntimeHtml({ projectRoot: project.projectRoot, projectId: project.id, html: runtimeHtml })).path;
+  if (process.env.QIVANCE_CHAT_STATIC_FALLBACK === "1") {
+    const frameContracts = buildChatFrameContracts({ projectId: project.id, conversationPlan, animationPlan });
+    assertValidation("chat_frame_contracts_invalid", validateChatFrameContracts({ conversationPlan, frameContracts }));
+    await writeChatFrameContracts({ projectRoot: project.projectRoot, frameContracts });
+    for (const frame of frameContracts.frames) {
+      const html = renderChatFrameHtml({ frame, conversationPlan });
+      assertValidation("chat_frame_html_invalid", validateChatFrameHtml(html));
+      await writeChatFrameHtml({ htmlPath: path.join(project.projectRoot, frame.html_path), frame, conversationPlan });
+    }
   }
+  return {
+    outputArtifacts: [
+      { path: runtimeHtmlPath, kind: "runtime_html" },
+    ],
+  };
 }
 
 async function renderVisualTask({ prisma, task }: V5SchedulerTaskHandlerInput, deps: V5TaskHandlerDeps): Promise<void> {
   const project = await prisma.project.findUniqueOrThrow({ where: { id: task.projectId } });
+  const runtimeTimelinePath = "data/chains/chat_dialogue_mv/runtime_timeline.json";
+  if (await fileExists(path.join(project.projectRoot, runtimeTimelinePath))) {
+    const runtimeTimeline = await readProjectJson<ChatRuntimeTimeline>(project.projectRoot, runtimeTimelinePath);
+    if (runtimeTimeline.render_mode === "browser_recording") {
+      await (deps.renderChatRuntimeToVisual ?? renderChatRuntimeToVisual)({
+        projectRoot: project.projectRoot,
+        runtimeHtmlPath: `video/html-video/.html-video/projects/${project.id}/runtime/chat_dialogue_mv.html`,
+        runtimeTimeline,
+        outputPath: path.join(project.projectRoot, "exports/chat_dialogue_mv/visual.mp4"),
+      });
+      return;
+    }
+  }
+  if (process.env.QIVANCE_CHAT_STATIC_FALLBACK !== "1") throw new Error("chat_runtime_timeline_missing: build runtime_timeline.json before render_visual.");
   const frameContracts = await readProjectJson<ChatFrameContracts>(project.projectRoot, "data/chains/chat_dialogue_mv/frame_contracts.json");
   await (deps.renderChatFramesToVisual ?? renderChatFramesToVisual)({
     projectRoot: project.projectRoot,
@@ -240,11 +271,17 @@ async function writeManifestTask({ prisma, run, task }: V5SchedulerTaskHandlerIn
   const audioProbe = await ffprobeJson(path.join(project.projectRoot, "active_music_take.mp3"), deps);
   const audioStreamCount = streamCount(finalProbe, "audio");
   const durationDriftMs = Math.round(Math.abs(probeDurationSec(finalProbe) - probeDurationSec(audioProbe)) * 1000);
+  const frameContractsEvidence = await optionalEvidenceRef(project.projectRoot, "data/chains/chat_dialogue_mv/frame_contracts.json");
   const manifest = buildRenderManifestV4({
     mode: "production",
     runId: run.id,
     conversationPlan: await evidenceRef(project.projectRoot, "data/chains/chat_dialogue_mv/conversation_plan.json"),
-    frameContracts: await evidenceRef(project.projectRoot, "data/chains/chat_dialogue_mv/frame_contracts.json"),
+    ...(frameContractsEvidence ? { frameContracts: frameContractsEvidence } : {}),
+    runtimeTimeline: await evidenceRef(project.projectRoot, "data/chains/chat_dialogue_mv/runtime_timeline.json"),
+    runtimeHtml: await evidenceRef(project.projectRoot, `video/html-video/.html-video/projects/${project.id}/runtime/chat_dialogue_mv.html`),
+    browserRenderEvidence: await evidenceRef(project.projectRoot, "data/chains/chat_dialogue_mv/browser_render_evidence.json"),
+    renderMode: "browser_recording",
+    fps: 60,
     lyrics: await evidenceRef(project.projectRoot, "lyrics.md"),
     audio: await evidenceRef(project.projectRoot, "active_music_take.mp3"),
     timing: {
@@ -334,6 +371,14 @@ async function evidenceRef(projectRoot: string, relativePath: string): Promise<R
     path: relativePath,
     sha256: await sha256File(path.join(projectRoot, relativePath)),
   };
+}
+
+async function optionalEvidenceRef(projectRoot: string, relativePath: string): Promise<RenderManifestV4EvidenceRef | undefined> {
+  return await fileExists(path.join(projectRoot, relativePath)) ? evidenceRef(projectRoot, relativePath) : undefined;
+}
+
+async function fileExists(filePath: string): Promise<boolean> {
+  return access(filePath).then(() => true, () => false);
 }
 
 async function runAudioAnalysis(input: {

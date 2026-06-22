@@ -26,6 +26,9 @@ test("builds chat dialogue execution plan with shared timing dependency", async 
   const conversationTask = plan.tasks.find((task) => task.stage === "build_conversation_plan");
   assert.ok(conversationTask);
   assert.ok(conversationTask.dependencies.some((dependency) => dependency.includes("resolve_timing_bundle")));
+  assert.ok(plan.tasks.find((task) => task.stage === "build_chat_frames")?.output_paths.includes("video/html-video/.html-video/projects/<project_id>/runtime/chat_dialogue_mv.html"));
+  assert.ok(plan.tasks.find((task) => task.stage === "render_visual")?.input_paths.includes("data/chains/chat_dialogue_mv/runtime_timeline.json"));
+  assert.equal(plan.tasks.find((task) => task.stage === "render_visual")?.input_paths.includes("data/chains/chat_dialogue_mv/frame_contracts.json"), false);
 });
 
 test("single project multi-chain plan writes one timing writer", async () => {

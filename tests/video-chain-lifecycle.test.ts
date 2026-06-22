@@ -161,13 +161,18 @@ test("chat_dialogue_mv confirm remains production full-chain and can reach passe
 async function writeDeclaredOutputs(
   prisma: Awaited<ReturnType<typeof createQivancePrismaClient>>,
   task: { projectId: string; outputArtifactsJson: string },
-): Promise<void> {
+): Promise<{ outputArtifacts?: Array<{ path: string }> }> {
   const dbProject = await prisma.project.findUniqueOrThrow({ where: { id: task.projectId } });
   const outputs = JSON.parse(task.outputArtifactsJson) as string[];
+  const outputArtifacts: Array<{ path: string }> = [];
   for (const relativePath of outputs) {
-    if (relativePath.includes("<")) continue;
-    await writeProjectFile(dbProject.projectRoot, relativePath, "artifact");
+    const resolvedPath = relativePath
+      .replaceAll("<project_id>", task.projectId)
+      .replaceAll("<agent_run_id>", "agent_run_test");
+    await writeProjectFile(dbProject.projectRoot, resolvedPath, "artifact");
+    if (relativePath.includes("<")) outputArtifacts.push({ path: resolvedPath });
   }
+  return outputArtifacts.length > 0 ? { outputArtifacts } : {};
 }
 
 async function writeProjectFile(projectRoot: string, relativePath: string, contents: string): Promise<void> {

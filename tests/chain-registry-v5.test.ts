@@ -33,6 +33,9 @@ test("V5 registry generates deterministic scheduler task seeds", () => {
   assert.deepEqual(seeds[1]?.dependencies, ["run_timing_pipeline"]);
   assert.deepEqual(seeds.at(-1)?.dependencies, ["qa_report"]);
   assert.ok(seeds[0]?.output_artifacts.includes("data/timing/section_map.json"));
+  assert.ok(seeds[4]?.output_artifacts.includes("data/chains/chat_dialogue_mv/runtime_timeline.json"));
+  assert.ok(seeds[4]?.output_artifacts.includes("video/html-video/.html-video/projects/<project_id>/runtime/chat_dialogue_mv.html"));
+  assert.equal(seeds[4]?.output_artifacts.includes("data/chains/chat_dialogue_mv/frame_contracts.json"), false);
   assert.ok(seeds.at(-1)?.output_artifacts.includes("exports/chat_dialogue_mv/render_manifest.json"));
 });
 

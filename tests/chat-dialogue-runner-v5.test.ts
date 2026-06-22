@@ -27,6 +27,11 @@ test("V5 chat_dialogue_mv handlers produce final media, QA report, manifest, and
     const manifest = JSON.parse(await readFile(path.join(projectRoot, "exports/chat_dialogue_mv/render_manifest.json"), "utf8"));
     assert.equal(manifest.schema_version, 4);
     assert.equal(manifest.chain.id, "chat_dialogue_mv");
+    assert.equal(manifest.chain.render_mode, "browser_recording");
+    assert.equal(manifest.chain.fps, 60);
+    assert.equal(manifest.chain.runtime_timeline.path, "data/chains/chat_dialogue_mv/runtime_timeline.json");
+    assert.equal(manifest.chain.runtime_html.path.endsWith("/runtime/chat_dialogue_mv.html"), true);
+    assert.equal(manifest.chain.browser_render_evidence.path, "data/chains/chat_dialogue_mv/browser_render_evidence.json");
     assert.equal(manifest.production_gates.diagnostic_only, false);
     assert.equal(manifest.qa.audio_stream_count, 1);
 
@@ -37,6 +42,8 @@ test("V5 chat_dialogue_mv handlers produce final media, QA report, manifest, and
     assert.ok(artifacts.some((artifact) => artifact.path === "exports/chat_dialogue_mv/final.mp4"));
     assert.ok(artifacts.some((artifact) => artifact.path === "exports/chat_dialogue_mv/render_manifest.json"));
     assert.ok(artifacts.some((artifact) => artifact.path === "data/chains/chat_dialogue_mv/qa_report.json"));
+    assert.ok(artifacts.some((artifact) => artifact.path === "data/chains/chat_dialogue_mv/runtime_timeline.json"));
+    assert.ok(artifacts.some((artifact) => artifact.path.includes("/runtime/chat_dialogue_mv.html")));
   } finally {
     await closeQivancePrismaClient(prisma);
   }
@@ -160,6 +167,26 @@ async function writeTimingBundle(projectRoot: string): Promise<void> {
 
 function fakeMediaDeps(): V5TaskHandlerDeps {
   return {
+    renderChatRuntimeToVisual: async (input) => {
+      await writeFile(input.outputPath, "visual mp4");
+      const evidence = {
+        schema_version: 1,
+        chain_id: "chat_dialogue_mv",
+        render_mode: "browser_recording",
+        runtime_html_path: input.runtimeHtmlPath,
+        output_path: "exports/chat_dialogue_mv/visual.mp4",
+        fps: input.runtimeTimeline.fps,
+        width: input.runtimeTimeline.width,
+        height: input.runtimeTimeline.height,
+        duration_sec: input.runtimeTimeline.duration_sec,
+        frame_count: Math.ceil(input.runtimeTimeline.duration_sec * input.runtimeTimeline.fps),
+        visual_sha256: "visual-sha",
+        capture_strategy: "cdp_virtual_time_screenshots",
+        chrome_executable: "mock-chrome",
+      };
+      await writeJson(path.join(input.projectRoot, "data/chains/chat_dialogue_mv/browser_render_evidence.json"), evidence);
+      return evidence;
+    },
     renderChatFramesToVisual: async (input) => {
       await writeFile(input.outputPath, "visual mp4");
       return { visual_path: "exports/chat_dialogue_mv/visual.mp4", frame_renders: [] };
